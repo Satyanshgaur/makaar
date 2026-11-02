@@ -14,3 +14,9 @@ jobs:
         run: |
           cd eval
           for f in results/*.json; do [ -e "$f" ] || exit 0; uv run python -m makaar_eval.gates "$f"; done
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust tests and clippy
+        run: cd core && cargo test --locked && cargo clippy --locked -- -D warnings
