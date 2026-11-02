@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 models/
 core/target/
+eval/results/
+eval/preds/
