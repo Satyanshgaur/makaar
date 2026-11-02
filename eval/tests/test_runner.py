@@ -32,3 +32,16 @@ def test_runner_end_to_end(tmp_path: Path, capsys):
     res = json.loads((tmp_path / "out" / "fake.json").read_text())
     assert res["summary"]["printed"]["ned_mean"] == 0.0
     srv.shutdown()
+
+
+def test_predictions_mode(tmp_path: Path):
+    d = tmp_path / "data" / "printed"
+    d.mkdir(parents=True)
+    (d / "p1.png").write_bytes(b"\x89PNG")
+    (d / "p1.md").write_text("hello world")
+    pr = tmp_path / "pred" / "printed"
+    pr.mkdir(parents=True)
+    (pr / "p1.md").write_text("hello world")
+    main([str(tmp_path / "data"), "--name", "ext", "--predictions", str(tmp_path / "pred"),
+          "--out", str(tmp_path / "out")])
+    assert json.loads((tmp_path / "out" / "ext.json").read_text())["summary"]["printed"]["ned_mean"] == 0.0
