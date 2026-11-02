@@ -1,0 +1,10 @@
+{
+  "_source": "docs/research.md, Test plan section 5 and Go/no-go gates",
+  "accuracy_margin_vs_baseline": 0.03,
+  "formula_compile_rate_min": 0.90,
+  "median_seconds_per_page_max": 60,
+  "loops_max": 0,
+  "flagged_wrong_min": 0.80,
+  "flag_rate_max": 0.10,
+  "forbidden_licenses_bundled": ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"]
+}
