@@ -12,3 +12,7 @@ Verified against primary sources on 2026-11-02.
 8. Code licence: Apache-2.0 (provisional, doc left MIT vs Apache open).
 9. **Dev GPU is an RTX 3050 6 GB laptop**, enough for the 0.9–1.2B engines at Q8 but not vLLM-batched fast-mode numbers. Throughput/cost claims must be measured on rented GPUs, not here.
 10. **One adapter for both engines.** `OpenAIEngine` talks to any OpenAI-compatible server (llama-server for PaddleOCR-VL, vLLM for TeleOCR), so Week-1 comparison uses identical scoring code.
+11. **TeleOCR (renamed from NaviDC-OCR; HF `StarDoc-AI/TeleOCR`) is a two-step pipeline**, not a whole-page prompt: layout pass ("Analyze the image layout.") then per-region prompts ("Please output the text content from the image.", "...LaTeX format.", OTSL for tables). Official runner is `infer.py` on vLLM with ~200 pinned deps. We score it through `runner --predictions` using its output rather than faking a whole-page prompt, which would understate it.
+12. **TeleOCR on llama.cpp** works only with a patched build (nandraj/NaviDC-OCR-GGUF, PATCHES.md); stock llama.cpp fails with `check_tensor_dims`. Q8_0 is 805 MB there, vs ~1.5 GB for teleocr-rs.
+13. **Smoke-tested** PaddleOCR-VL-1.6 GGUF on llama-server (CUDA build, RTX 3050 6 GB): ~1.9 GB VRAM, 0.8 s for a short paragraph. Not a gate number; real pages pending.
+14. **Tectonic**: `cargo install` needs libpng/harfbuzz dev packages (sudo); the prebuilt musl 0.17.0 binary works. First compile downloads the TeX bundle and is slow.

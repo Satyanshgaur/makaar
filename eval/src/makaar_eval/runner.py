@@ -39,6 +39,28 @@ def score_page(engine: Engine, img: Path, truth: Path, check_latex: bool) -> dic
     return out
 
 
+class StoredPredictions:
+    """Scores outputs produced elsewhere (e.g. TeleOCR's infer.py), looked up as <dir>/<bucket>/<page>.md."""
+
+    def __init__(self, name: str, root: Path):
+        self.name, self.root = name, root
+        self._current: Path | None = None
+
+    def for_page(self, img: Path, dataset: Path) -> Path:
+        return self.root / img.relative_to(dataset).with_suffix(".md")
+
+
+def score_stored(pred: Path, img: Path, truth: Path, check_latex: bool) -> dict:
+    text = pred.read_text() if pred.exists() else ""
+    out = {"page": str(img), "seconds": 0.0, "ned": normalized_edit_distance(text, truth.read_text()),
+           "confidence": 1.0, "loop": has_loop(text), "text": text, "missing": not pred.exists()}
+    if check_latex:
+        f = DISPLAY_MATH.findall(text)
+        out["formulas"] = len(f)
+        out["formulas_compiled"] = sum(latex_compiles(x) for x in f)
+    return out
+
+
 def summarize(rows: list[dict]) -> dict:
     by: dict[str, list[dict]] = {}
     for r in rows:
@@ -60,6 +82,8 @@ def main(argv=None):
     ap.add_argument("--url", default="http://127.0.0.1:8080")
     ap.add_argument("--model", default="default")
     ap.add_argument("--prompt", help="override the text prompt (TeleOCR)")
+    ap.add_argument("--predictions", type=Path,
+                    help="score existing <dir>/<bucket>/<page>.md outputs instead of calling a server (seconds=0)")
     ap.add_argument("--latex", action="store_true", help="also check formula compile rate")
     ap.add_argument("--out", type=Path, default=Path("results"))
     a = ap.parse_args(argv)
@@ -67,10 +91,14 @@ def main(argv=None):
     prompts = dict(PADDLE_PROMPTS)
     if a.prompt:
         prompts["text"] = a.prompt
-    engine = OpenAIEngine(a.name, a.url, a.model, prompts)
+    engine = OpenAIEngine(a.name, a.url, a.model, prompts) if not a.predictions else None
+    stored = StoredPredictions(a.name, a.predictions) if a.predictions else None
     rows = []
     for bucket, img, truth in pages(a.dataset):
-        r = score_page(engine, img, truth, a.latex)
+        if stored:
+            r = score_stored(stored.for_page(img, a.dataset), img, truth, a.latex)
+        else:
+            r = score_page(engine, img, truth, a.latex)
         rows.append({"bucket": bucket, **r})
         print(f"{bucket}/{img.name}: ned={r['ned']:.3f} {r['seconds']:.1f}s", flush=True)
     a.out.mkdir(parents=True, exist_ok=True)
