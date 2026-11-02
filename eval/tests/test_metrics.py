@@ -50,3 +50,10 @@ def test_schema_rejects_bad_block():
     except jsonschema.ValidationError:
         return
     raise AssertionError("expected rejection")
+
+
+def test_clean_text_ignores_formatting():
+    from makaar_eval.metrics import clean_text
+    a = "# Title\n\n```c\nint x;\n```\n\n**Step 1:** go\n\n---\n\n\\[ x^2 \\]\n\n```mermaid\nflowchart TD\nA-->B\n```"
+    b = "Title int x; Step 1: go x^2"
+    assert clean_text(a) == b

@@ -64,3 +64,21 @@ def latex_compiles(formula: str, tectonic: str = "tectonic", timeout: float = 12
         except subprocess.TimeoutExpired:
             return False
         return r.returncode == 0
+
+
+_MERMAID = re.compile(r"```mermaid.*?```", re.S)
+
+
+def clean_text(md: str) -> str:
+    """Strip presentation so models are scored on content, not formatting.
+
+    Removes Mermaid blocks (models can't be expected to draw diagrams), code-fence markers,
+    heading/bold/rule markup and LaTeX math delimiters, then lowercases nothing and collapses space.
+    """
+    md = _MERMAID.sub(" ", md)
+    md = re.sub(r"^```\w*\s*$", " ", md, flags=re.M)
+    md = re.sub(r"^\s*(-{3,}|\*{3,})\s*$", " ", md, flags=re.M)
+    md = re.sub(r"^#{1,6}\s*", "", md, flags=re.M)
+    md = re.sub(r"\\[()\[\]]|\$\$|\*\*|`", " ", md)
+    md = re.sub(r"\\(?:,|;|!|quad|qquad|text|mathrm)\b", " ", md)
+    return " ".join(md.split())

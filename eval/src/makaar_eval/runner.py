@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from .engine import Engine, Region
-from .metrics import has_loop, latex_compiles, normalized_edit_distance
+from .metrics import clean_text, has_loop, latex_compiles, normalized_edit_distance
 from .openai_engine import PADDLE_PROMPTS, OpenAIEngine
 
 IMG_EXT = {".png", ".jpg", ".jpeg"}
@@ -31,6 +31,7 @@ def score_page(engine: Engine, img: Path, truth: Path, check_latex: bool) -> dic
     rec = engine.recognize(Region(img.read_bytes(), (0, 0, 0, 0), "page"), "text")
     secs = time.perf_counter() - t0
     out = {"page": str(img), "seconds": secs, "ned": normalized_edit_distance(rec.text, truth.read_text()),
+           "ned_clean": normalized_edit_distance(clean_text(rec.text), clean_text(truth.read_text())),
            "confidence": rec.confidence, "loop": has_loop(rec.text), "text": rec.text}
     if check_latex:
         f = DISPLAY_MATH.findall(rec.text)
@@ -53,6 +54,7 @@ class StoredPredictions:
 def score_stored(pred: Path, img: Path, truth: Path, check_latex: bool) -> dict:
     text = pred.read_text() if pred.exists() else ""
     out = {"page": str(img), "seconds": 0.0, "ned": normalized_edit_distance(text, truth.read_text()),
+           "ned_clean": normalized_edit_distance(clean_text(text), clean_text(truth.read_text())),
            "confidence": 1.0, "loop": has_loop(text), "text": text, "missing": not pred.exists()}
     if check_latex:
         f = DISPLAY_MATH.findall(text)
@@ -69,6 +71,7 @@ def summarize(rows: list[dict]) -> dict:
     for b, rs in by.items():
         secs = sorted(r["seconds"] for r in rs)
         out[b] = {"pages": len(rs), "ned_mean": statistics.mean(r["ned"] for r in rs),
+                  "ned_clean_mean": statistics.mean(r["ned_clean"] for r in rs),
                   "sec_median": statistics.median(secs),
                   "sec_p90": secs[min(len(secs) - 1, int(0.9 * len(secs)))],
                   "loops": sum(r["loop"] for r in rs)}
@@ -100,7 +103,7 @@ def main(argv=None):
         else:
             r = score_page(engine, img, truth, a.latex)
         rows.append({"bucket": bucket, **r})
-        print(f"{bucket}/{img.name}: ned={r['ned']:.3f} {r['seconds']:.1f}s", flush=True)
+        print(f"{bucket}/{img.name}: ned={r['ned']:.3f} clean={r['ned_clean']:.3f} {r['seconds']:.1f}s", flush=True)
     a.out.mkdir(parents=True, exist_ok=True)
     summary = summarize(rows)
     (a.out / f"{a.name}.json").write_text(json.dumps({"summary": summary, "pages": rows}, indent=1))
