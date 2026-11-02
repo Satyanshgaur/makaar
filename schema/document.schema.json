@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://makaar.dev/schema/document.schema.json",
+  "title": "Makaar document",
+  "type": "object",
+  "required": ["version", "id", "pages"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "id": {"type": "string", "minLength": 1},
+    "source": {"type": "string"},
+    "pages": {"type": "array", "items": {"$ref": "#/$defs/page"}}
+  },
+  "$defs": {
+    "bbox": {
+      "type": "array", "items": {"type": "number", "minimum": 0},
+      "minItems": 4, "maxItems": 4,
+      "description": "x0, y0, x1, y1 in pixels of the cleaned page image"
+    },
+    "page": {
+      "type": "object",
+      "required": ["index", "width", "height", "blocks"],
+      "additionalProperties": false,
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "image": {"type": "string"},
+        "blocks": {"type": "array", "items": {"$ref": "#/$defs/block"}}
+      }
+    },
+    "block": {
+      "type": "object",
+      "required": ["id", "type", "bbox", "order"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"enum": ["text", "heading", "formula", "table", "figure", "list", "caption", "handwriting"]},
+        "bbox": {"$ref": "#/$defs/bbox"},
+        "order": {"type": "integer", "minimum": 0},
+        "crop": {"type": "string"},
+        "text": {"type": "string", "description": "Markdown text, LaTeX for formulas, HTML for tables"},
+        "script": {"type": "string", "description": "ISO 15924 code, e.g. Latn, Deva"},
+        "engine": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "verified": {"type": "boolean", "description": "Passed its verification check"},
+        "flagged": {"type": "boolean"},
+        "edited": {"type": "boolean"}
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+[
+  {"name": "PaddleOCR-VL-1.6", "license": "Apache-2.0", "bundled": false},
+  {"name": "TeleOCR", "license": "Apache-2.0", "bundled": false},
+  {"name": "PP-DocLayoutV3", "license": "Apache-2.0", "bundled": false},
+  {"name": "Texo", "license": "AGPL-3.0", "bundled": false},
+  {"name": "IndicOCR", "license": "Indic-Open-Model-1.0", "bundled": false}
+]
