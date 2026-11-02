@@ -1,0 +1,16 @@
+name: ci
+on: [pull_request, push]
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Unit tests
+        run: cd eval && uv run pytest -q
+      - name: Licence gate
+        run: python3 scripts/check_licenses.py
+      - name: Accuracy/speed gates on committed results (if any)
+        run: |
+          cd eval
+          for f in results/*.json; do [ -e "$f" ] || exit 0; uv run python -m makaar_eval.gates "$f"; done
