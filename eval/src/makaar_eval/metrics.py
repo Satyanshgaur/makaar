@@ -51,7 +51,7 @@ def has_loop(text: str, min_repeat: int = 8) -> bool:
     return re.search(r"(.{3,}?)\1{%d,}" % (min_repeat - 1), text, re.S) is not None
 
 
-def latex_compiles(formula: str, tectonic: str = "tectonic") -> bool:
+def latex_compiles(formula: str, tectonic: str = "tectonic", timeout: float = 120) -> bool:
     """True if the formula compiles inside a minimal document. False if Tectonic is missing."""
     exe = shutil.which(tectonic)
     if exe is None:
@@ -59,5 +59,8 @@ def latex_compiles(formula: str, tectonic: str = "tectonic") -> bool:
     doc = "\\documentclass{article}\\usepackage{amsmath,amssymb}\\begin{document}\n$$" + formula + "$$\n\\end{document}\n"
     with tempfile.TemporaryDirectory() as d:
         (Path(d) / "f.tex").write_text(doc)
-        r = subprocess.run([exe, "-X", "compile", "f.tex"], cwd=d, capture_output=True, timeout=120)
+        try:
+            r = subprocess.run([exe, "-X", "compile", "f.tex"], cwd=d, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return False
         return r.returncode == 0

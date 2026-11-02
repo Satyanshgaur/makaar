@@ -2,7 +2,7 @@
 # Installs Tectonic and prints model-download commands. Models are large; run those yourself.
 set -euo pipefail
 command -v tectonic >/dev/null || {
-  echo "Tectonic missing. Fedora: sudo dnf install tectonic  |  or: cargo install tectonic" >&2; exit 1; }
+  echo "Tectonic missing. cargo install needs libpng/harfbuzz/fontconfig dev libs; easier: gh release download tectonic@0.17.0 -R tectonic-typesetting/tectonic -p "*x86_64-unknown-linux-musl.tar.gz"" >&2; exit 1; }
 tectonic --version
 cat <<'MSG'
 Models (not downloaded automatically):
