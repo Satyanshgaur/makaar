@@ -255,11 +255,8 @@ impl LayoutDetector for PpDocLayoutV3 {
                 "boxes shape {shape:?}, want [N, 7]"
             )));
         }
-        let rows: Vec<[f32; 7]> = data
-            .chunks_exact(7)
-            .map(|r| r.try_into().expect("chunk of 7"))
-            .collect();
-        Ok(postprocess(&rows, w, h, &self.config))
+        let (rows, _) = data.as_chunks::<7>();
+        Ok(postprocess(rows, w, h, &self.config))
     }
 }
 
