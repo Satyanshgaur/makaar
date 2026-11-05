@@ -2,7 +2,7 @@
 
 Open-source, offline notes-to-LaTeX/Markdown/Word converter. See `docs/research.md` for the research and build plan, and `docs/DECISIONS.md` for where we diverge from it.
 
-Status: Phase 2 (ingest and layout stages in `core/`). Gate 1 is still open: only 10 eval pages so far.
+Status: Phase 2–3 (ingest, layout, per-region recognition, Markdown and compile-checked LaTeX export in `core/`). Gate 1 is still open: only 10 eval pages so far.
 
 ## Layout
 - `schema/document.schema.json` – the job document (pages → blocks), single source of truth for review UI and exports
