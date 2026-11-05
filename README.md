@@ -10,6 +10,7 @@ Status: Phase 3. The `makaar` CLI converts page images end to end, offline: layo
 cargo build --release --manifest-path core/Cargo.toml
 core/target/release/makaar models --download        # ~1.9 GB, SHA-256 checked
 core/target/release/makaar convert scans/ -o out/    # out/notes.{md,tex,pdf,docx,json}
+core/target/release/makaar review out/notes.json      # fix flagged blocks in the browser; saving re-exports
 ```
 
 You need `llama-server` from llama.cpp (on PATH or `$MAKAAR_LLAMA_SERVER`). `tectonic` is optional and enables the LaTeX compile check. Use `--gpu-layers 0` for CPU only. Rerun the same command to resume an interrupted job.

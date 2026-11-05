@@ -10,4 +10,5 @@ pub mod models;
 pub mod ocr;
 pub mod pipeline;
 pub mod queue;
+pub mod review;
 pub mod sidecar;
