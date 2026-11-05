@@ -7,13 +7,13 @@ Status: Phase 3. The `makaar` CLI converts page images end to end, offline: layo
 ## Try it
 
 ```
-cargo build --release --manifest-path core/Cargo.toml
-core/target/release/makaar models --download        # ~1.9 GB, SHA-256 checked
+cargo build --release --manifest-path core/Cargo.toml   # or a build from the release workflow
+core/target/release/makaar setup                     # models (~1.9 GB) + llama.cpp's llama-server, SHA-256 checked
 core/target/release/makaar convert scans/ -o out/    # out/notes.{md,tex,pdf,docx,json}
 core/target/release/makaar review out/notes.json      # fix flagged blocks in the browser; saving re-exports
 ```
 
-You need `llama-server` from llama.cpp (on PATH or `$MAKAAR_LLAMA_SERVER`). `tectonic` is optional and enables the LaTeX compile check. Use `--gpu-layers 0` for CPU only. Rerun the same command to resume an interrupted job.
+`setup` installs llama.cpp's official CPU build for your platform (`--backend vulkan` uses most laptop GPUs); an existing `llama-server` on PATH or `$MAKAAR_LLAMA_SERVER` also works. `tectonic` is optional and enables the LaTeX compile check. Use `--gpu-layers 0` for CPU only. Rerun the same command to resume an interrupted job.
 
 ## Layout
 - `schema/document.schema.json` – the job document (pages → blocks), single source of truth for review UI and exports
