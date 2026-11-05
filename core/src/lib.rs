@@ -6,5 +6,7 @@ pub mod ingest;
 pub mod latex;
 pub mod omml;
 pub mod layout;
+pub mod models;
 pub mod pipeline;
 pub mod queue;
+pub mod sidecar;
