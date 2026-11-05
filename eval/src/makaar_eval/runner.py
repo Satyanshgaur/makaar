@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import time
@@ -85,6 +86,12 @@ def main(argv=None):
     ap.add_argument("--url", default="http://127.0.0.1:8080")
     ap.add_argument("--model", default="default")
     ap.add_argument("--prompt", help="override the text prompt (TeleOCR)")
+    ap.add_argument("--prompt-file", type=Path, help="read the text prompt from a file")
+    ap.add_argument("--api-key-file", type=Path,
+                    help="file holding the API key (else $MAKAAR_API_KEY); keeps it off the command line")
+    ap.add_argument("--no-logprobs", action="store_true", help="for servers that reject logprobs (Gemini)")
+    ap.add_argument("--max-tokens", type=int, default=4096)
+    ap.add_argument("--reasoning-effort", help="passed through, e.g. low for Gemini thinking models")
     ap.add_argument("--predictions", type=Path,
                     help="score existing <dir>/<bucket>/<page>.md outputs instead of calling a server (seconds=0)")
     ap.add_argument("--latex", action="store_true", help="also check formula compile rate")
@@ -92,9 +99,15 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     prompts = dict(PADDLE_PROMPTS)
+    if a.prompt_file:
+        prompts["text"] = a.prompt_file.read_text().strip()
     if a.prompt:
         prompts["text"] = a.prompt
-    engine = OpenAIEngine(a.name, a.url, a.model, prompts) if not a.predictions else None
+    key = a.api_key_file.read_text().strip() if a.api_key_file else os.environ.get("MAKAAR_API_KEY")
+    extra = {"reasoning_effort": a.reasoning_effort} if a.reasoning_effort else {}
+    engine = None if a.predictions else OpenAIEngine(
+        a.name, a.url, a.model, prompts, max_tokens=a.max_tokens, api_key=key,
+        logprobs=not a.no_logprobs, extra=extra)
     stored = StoredPredictions(a.name, a.predictions) if a.predictions else None
     rows = []
     for bucket, img, truth in pages(a.dataset):
