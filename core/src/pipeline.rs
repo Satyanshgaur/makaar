@@ -2,6 +2,8 @@
 //! Figures are kept as images, not read. A page is read whole as one text block when the layout
 //! finds nothing, or when its text regions overlap so much that lines would be read twice
 //! (handwritten notes); this is the plan's "hard regions go straight to the general model".
+//! With a specialist, prose regions try it first and keep its text only when its character
+//! confidence clears `accept`; everything else goes to the general model.
 use image::RgbImage;
 
 use crate::document::{Block, BlockType, Page};
@@ -24,6 +26,8 @@ pub struct PipelineConfig {
     pub max_overlap: f32,
     /// Token budget for a whole page; regions get their area share of it (with margin).
     pub page_tokens: u32,
+    /// A specialist's text is kept when its mean character probability is at least this.
+    pub accept: f64,
 }
 
 impl Default for PipelineConfig {
@@ -31,8 +35,38 @@ impl Default for PipelineConfig {
         Self {
             max_overlap: 0.1,
             page_tokens: 4096,
+            accept: ACCEPT,
         }
     }
+}
+
+/// Default specialist acceptance; see DECISIONS for the calibration.
+pub const ACCEPT: f64 = 0.98;
+
+/// Prose regions a line reader can handle. Code (`algorithm`) needs its layout kept, and the
+/// whole-page fallback is handwriting, so both go to the general model.
+pub fn specialist_eligible(b: &Block) -> bool {
+    matches!(
+        b.kind,
+        BlockType::Text | BlockType::Heading | BlockType::Caption
+    ) && !matches!(
+        b.label.as_deref(),
+        Some("algorithm" | "page" | "formula_number")
+    )
+}
+
+/// Joins a line reader's lines into one paragraph, undoing end-of-line hyphenation.
+pub fn reflow(text: &str) -> String {
+    let mut out = String::new();
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if out.ends_with('-') && line.starts_with(|c: char| c.is_lowercase()) {
+            out.pop();
+        } else if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(line);
+    }
+    out
 }
 
 /// Pixels added around each crop so strokes on the box edge are not cut.
@@ -109,6 +143,17 @@ pub fn recognize_page(
     engine: &mut dyn Engine,
     cfg: &PipelineConfig,
 ) -> Result<Page, PipelineError> {
+    recognize_page_routed(img, index, layout, None, engine, cfg)
+}
+
+pub fn recognize_page_routed(
+    img: &RgbImage,
+    index: u32,
+    layout: &mut dyn LayoutDetector,
+    mut specialist: Option<&mut dyn Engine>,
+    engine: &mut dyn Engine,
+    cfg: &PipelineConfig,
+) -> Result<Page, PipelineError> {
     let (width, height) = img.dimensions();
     let found = layout.detect(img)?;
     let mut blocks = if found.regions.is_empty() || found.overlap > cfg.max_overlap {
@@ -119,7 +164,18 @@ pub fn recognize_page(
     for b in &mut blocks {
         let Some(task) = task_for(b) else { continue };
         let budget = token_budget(b.bbox, width, height, cfg.page_tokens);
-        let rec = engine.recognize(&crop(img, b.bbox), task, budget)?;
+        let region = crop(img, b.bbox);
+        if let Some(s) = specialist.as_mut().filter(|_| specialist_eligible(b)) {
+            let rec = s.recognize(&region, Task::Text, budget)?;
+            if !rec.text.trim().is_empty() && rec.confidence() >= cfg.accept {
+                b.text = Some(reflow(&rec.text));
+                b.confidence = Some(rec.confidence());
+                b.engine = Some(rec.engine);
+                b.verified = Some(true); // passed the confidence check
+                continue;
+            }
+        }
+        let rec = engine.recognize(&region, task, budget)?;
         b.confidence = Some(rec.confidence());
         b.engine = Some(rec.engine.clone());
         if rec.truncated {
@@ -175,6 +231,71 @@ mod tests {
                 truncated: self.1.is_some(),
             })
         }
+    }
+
+    /// A specialist that returns fixed text at a fixed confidence.
+    struct Fixed(&'static str, f64);
+    impl Engine for Fixed {
+        fn name(&self) -> &str {
+            "fixed"
+        }
+        fn recognize(&mut self, _: &RgbImage, _: Task, _: u32) -> Result<Recognition, EngineError> {
+            Ok(Recognition {
+                text: self.0.into(),
+                token_probs: vec![self.1],
+                engine: "fixed".into(),
+                truncated: false,
+            })
+        }
+    }
+
+    #[test]
+    fn specialist_kept_only_when_confident() {
+        let img = RgbImage::new(100, 100);
+        let regions = vec![
+            region("text", [0., 0., 50., 10.], 1.),
+            region("display_formula", [10., 20., 30., 30.], 2.),
+            region("algorithm", [0., 40., 100., 60.], 3.),
+        ];
+        let cfg = PipelineConfig::default();
+        let mut general = Echo(vec![], None);
+        let mut sure = Fixed("hyphen-\nated line", 0.99);
+        let page = recognize_page_routed(
+            &img,
+            0,
+            &mut FixedLayout(regions.clone()),
+            Some(&mut sure),
+            &mut general,
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(page.blocks[0].text.as_deref(), Some("hyphenated line"));
+        assert_eq!(page.blocks[0].verified, Some(true));
+        // formula and code still go to the general model
+        assert_eq!(general.0.len(), 2);
+
+        let mut general = Echo(vec![], None);
+        let mut unsure = Fixed("guess", 0.6);
+        let page = recognize_page_routed(
+            &img,
+            0,
+            &mut FixedLayout(regions),
+            Some(&mut unsure),
+            &mut general,
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(page.blocks[0].text.as_deref(), Some("Text"));
+        assert_eq!(general.0.len(), 3);
+    }
+
+    #[test]
+    fn reflow_joins_lines() {
+        assert_eq!(
+            reflow("a long para-\ngraph\n\nends\nhere"),
+            "a long paragraph ends here"
+        );
+        assert_eq!(reflow("Self-\nAssessment"), "Self- Assessment");
     }
 
     fn region(label: &'static str, bbox: [f32; 4], order: f32) -> Region {

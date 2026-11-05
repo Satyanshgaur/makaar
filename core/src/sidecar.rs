@@ -124,3 +124,51 @@ impl Drop for LlamaServer {
         let _ = self.child.wait();
     }
 }
+
+/// The general model behind llama-server, started on the first region that needs it. Pages the
+/// specialists finish never load the 1.8 GB model.
+pub struct LazyServer {
+    bin: PathBuf,
+    cfg: SidecarConfig,
+    running: Option<(LlamaServer, crate::engine::OpenAiEngine)>,
+    name: String,
+}
+
+impl LazyServer {
+    pub fn new(name: &str, bin: PathBuf, cfg: SidecarConfig) -> Self {
+        Self {
+            bin,
+            cfg,
+            running: None,
+            name: name.into(),
+        }
+    }
+
+    pub fn started(&self) -> bool {
+        self.running.is_some()
+    }
+}
+
+impl crate::engine::Engine for LazyServer {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn recognize(
+        &mut self,
+        crop: &image::RgbImage,
+        task: crate::engine::Task,
+        max_tokens: u32,
+    ) -> Result<crate::engine::Recognition, crate::engine::EngineError> {
+        if self.running.is_none() {
+            let t = Instant::now();
+            let server = LlamaServer::start(&self.bin, &self.cfg)
+                .map_err(|e| crate::engine::EngineError::Response(e.to_string()))?;
+            eprintln!("general model ready in {:.0}s", t.elapsed().as_secs_f64());
+            let engine = crate::engine::OpenAiEngine::new(&self.name, &server.url);
+            self.running = Some((server, engine));
+        }
+        let (_, engine) = self.running.as_mut().expect("started above");
+        engine.recognize(crop, task, max_tokens)
+    }
+}
