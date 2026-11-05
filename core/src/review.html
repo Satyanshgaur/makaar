@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>makaar review</title>
+<style>
+  :root { --bad: #c62828; --ok: #2e7d32; --sel: #1565c0; --line: #ddd; --muted: #666; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; color: #222; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); background: #fafafa; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  header .grow { flex: 1; }
+  #status { color: var(--muted); }
+  button { font: inherit; padding: 4px 10px; border: 1px solid #bbb; background: #fff; border-radius: 4px; cursor: pointer; }
+  button.primary { background: var(--sel); color: #fff; border-color: var(--sel); }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+  #pageview { overflow: auto; background: #eee; padding: 12px; border-right: 1px solid var(--line); }
+  #pagewrap { position: relative; display: inline-block; }
+  #pagewrap img { display: block; max-width: 100%; }
+  .box { position: absolute; border: 2px solid rgba(21,101,192,.45); cursor: pointer; }
+  .box.flagged { border-color: var(--bad); background: rgba(198,40,40,.08); }
+  .box.verified { border-color: rgba(46,125,50,.6); }
+  .box.sel { border-color: var(--sel); box-shadow: 0 0 0 3px rgba(21,101,192,.3); }
+  #noimg { color: var(--muted); padding: 20px; }
+  #blocks { overflow: auto; padding: 12px 16px; }
+  .block { border: 1px solid var(--line); border-left: 4px solid #bbb; border-radius: 4px; margin-bottom: 10px; padding: 8px 10px; }
+  .block.flagged { border-left-color: var(--bad); }
+  .block.verified { border-left-color: var(--ok); }
+  .block.sel { box-shadow: 0 0 0 2px var(--sel); }
+  .meta { font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+  .meta .tag { padding: 0 6px; border-radius: 3px; background: #eee; }
+  .meta .flag { background: #ffebee; color: var(--bad); }
+  .meta .ok { background: #e8f5e9; color: var(--ok); }
+  .meta .edited { background: #fff8e1; color: #8d6e00; }
+  .preview { margin-top: 4px; overflow-x: auto; }
+  .preview pre { margin: 0; font-size: 13px; }
+  .preview .bad { color: var(--bad); }
+  textarea { width: 100%; min-height: 90px; font: 13px/1.4 ui-monospace, monospace; margin-top: 6px; }
+  .actions { margin-top: 6px; display: flex; gap: 6px; }
+  .hidden { display: none; }
+  kbd { font-size: 11px; border: 1px solid currentColor; border-radius: 3px; padding: 0 4px; opacity: .8; }
+</style>
+</head>
+<body>
+<header>
+  <h1>makaar review</h1>
+  <button id="prev">◀</button><span id="pagelabel"></span><button id="next">▶</button>
+  <label><input type="checkbox" id="onlyflagged"> flagged only</label>
+  <span class="grow"></span>
+  <span id="status"></span>
+  <button id="nextflag" title="n">Next flagged <kbd>n</kbd></button>
+  <button id="save" class="primary" title="Ctrl+S">Save &amp; export <kbd>Ctrl S</kbd></button>
+</header>
+<main>
+  <section id="pageview"><div id="pagewrap"><img id="pageimg" alt=""></div><div id="noimg" class="hidden">No page image recorded for this page.</div></section>
+  <section id="blocks"></section>
+</main>
+<script>/*BOOT*/</script>
+<script>
+const token = new URLSearchParams(location.search).get("t");
+const api = (p) => p + (p.includes("?") ? "&" : "?") + "t=" + token;
+let doc, page = 0, sel = null, dirty = false, cached = {};
+
+const $ = (id) => document.getElementById(id);
+const status = (s) => { $("status").textContent = s; };
+const state = (b) => b.flagged ? "flagged" : b.verified ? "verified" : "";
+
+async function preview(b, el) {
+  if (b.type === "figure") { el.textContent = b.crop ? "[figure: " + b.crop + "]" : "[figure]"; return; }
+  const key = page + ":" + b.id;
+  if (!b.edited && cached[key] != null) { el.innerHTML = cached[key]; return; }
+  const r = await fetch(api("/preview"), { method: "POST", body: JSON.stringify({ type: b.type, label: b.label, text: b.text || "" }) });
+  el.innerHTML = await r.text();
+}
+
+function ordered(p) { return [...p.blocks].sort((a, b) => a.order - b.order); }
+
+function render() {
+  const p = doc.pages[page];
+  $("pagelabel").textContent = ` page ${page + 1} / ${doc.pages.length} `;
+  const img = $("pageimg");
+  const wrap = $("pagewrap");
+  wrap.querySelectorAll(".box").forEach((e) => e.remove());
+  if (p.image) {
+    img.src = api("/page/" + page);
+    img.classList.remove("hidden"); $("noimg").classList.add("hidden");
+  } else {
+    img.removeAttribute("src"); img.classList.add("hidden"); $("noimg").classList.remove("hidden");
+  }
+  const place = () => {
+    const s = img.clientWidth / p.width;
+    for (const b of p.blocks) {
+      const d = document.createElement("div");
+      d.className = "box " + state(b) + (sel === b.id ? " sel" : "");
+      Object.assign(d.style, { left: b.bbox[0] * s + "px", top: b.bbox[1] * s + "px", width: (b.bbox[2] - b.bbox[0]) * s + "px", height: (b.bbox[3] - b.bbox[1]) * s + "px" });
+      d.title = (b.label || b.type) + (b.flagged ? " — flagged" : "");
+      d.onclick = () => select(b.id, true);
+      wrap.appendChild(d);
+    }
+  };
+  if (p.image) { img.complete && img.naturalWidth ? place() : (img.onload = place); }
+
+  const list = $("blocks");
+  list.innerHTML = "";
+  const only = $("onlyflagged").checked;
+  for (const b of ordered(p)) {
+    if (only && !b.flagged) continue;
+    const card = document.createElement("div");
+    card.className = "block " + state(b) + (sel === b.id ? " sel" : "");
+    card.id = "card-" + b.id;
+    const conf = b.confidence != null ? `conf ${b.confidence.toFixed(2)}` : "";
+    card.innerHTML = `<div class="meta"><span class="tag">${b.label || b.type}</span>
+      ${b.flagged ? '<span class="tag flag">flagged</span>' : ""}${b.verified ? '<span class="tag ok">verified</span>' : ""}
+      ${b.edited ? '<span class="tag edited">edited</span>' : ""}<span>${b.engine || ""}</span><span>${conf}</span></div>
+      <div class="preview"></div>`;
+    preview(b, card.querySelector(".preview"));
+    card.onclick = (e) => { if (e.target.tagName !== "TEXTAREA" && e.target.tagName !== "BUTTON") select(b.id, false); };
+    if (sel === b.id && b.type !== "figure") {
+      const ta = document.createElement("textarea");
+      ta.value = b.text || "";
+      ta.rows = Math.min(20, Math.max(4, ta.value.split("\n").length + 1));
+      let t;
+      ta.oninput = () => {
+        b.text = ta.value; b.edited = true; dirty = true; status("unsaved changes");
+        clearTimeout(t); t = setTimeout(() => preview(b, card.querySelector(".preview")), 200);
+      };
+      const acts = document.createElement("div");
+      acts.className = "actions";
+      acts.innerHTML = `<button data-a="ok">Looks right</button><button data-a="flag">Flag</button>`;
+      acts.onclick = (e) => {
+        const a = e.target.dataset.a; if (!a) return;
+        if (a === "ok") { b.flagged = false; b.verified = true; } else { b.flagged = true; b.verified = false; }
+        dirty = true; status("unsaved changes"); render();
+      };
+      card.append(ta, acts);
+      setTimeout(() => ta.focus(), 0);
+    }
+    list.appendChild(card);
+  }
+}
+
+function select(id, scroll) {
+  sel = id; render();
+  if (scroll) document.getElementById("card-" + id)?.scrollIntoView({ block: "center" });
+}
+
+function nextFlagged() {
+  const all = doc.pages.flatMap((p, i) => ordered(p).map((b) => [i, b]));
+  const cur = all.findIndex(([i, b]) => i === page && b.id === sel);
+  const hit = [...all.slice(cur + 1), ...all.slice(0, cur + 1)].find(([, b]) => b.flagged);
+  if (!hit) { status("nothing flagged"); return; }
+  page = hit[0]; select(hit[1].id, true);
+}
+
+async function save() {
+  status("saving…");
+  const r = await fetch(api("/save"), { method: "POST", body: JSON.stringify(doc) });
+  const msg = await r.text();
+  if (r.ok) { dirty = false; cached = {}; doc = await (await fetch(api("/doc"))).json(); render(); }
+  status(r.ok ? msg : "save failed: " + msg);
+}
+
+$("prev").onclick = () => { if (page > 0) { page--; sel = null; render(); } };
+$("next").onclick = () => { if (page < doc.pages.length - 1) { page++; sel = null; render(); } };
+$("onlyflagged").onchange = render;
+$("nextflag").onclick = nextFlagged;
+$("save").onclick = save;
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); }
+  else if (e.key === "n" && e.target.tagName !== "TEXTAREA") nextFlagged();
+});
+window.addEventListener("beforeunload", (e) => { if (dirty) e.preventDefault(); });
+window.addEventListener("resize", render);
+
+(async () => {
+  if (window.BOOT) { doc = BOOT.doc; cached = BOOT.previews; } else { doc = await (await fetch(api("/doc"))).json(); }
+  const flagged = doc.pages.flatMap((p) => p.blocks).filter((b) => b.flagged).length;
+  status(`${doc.pages.length} page(s), ${flagged} flagged`);
+  render();
+})();
+</script>
+</body>
+</html>

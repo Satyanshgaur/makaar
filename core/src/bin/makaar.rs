@@ -60,6 +60,18 @@ enum Cmd {
         #[arg(long)]
         no_specialist: bool,
     },
+    /// Open the review screen for a converted document (`<out>/<name>.json`) in the browser;
+    /// saving re-exports the other formats beside it.
+    Review {
+        json: PathBuf,
+        /// Port on 127.0.0.1 (0 picks a free one).
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        #[arg(long, default_value = "md,tex,docx")]
+        formats: String,
+        #[arg(long)]
+        tectonic: Option<PathBuf>,
+    },
     /// Show model status; download missing files or verify checksums.
     Models {
         #[arg(long)]
@@ -73,6 +85,12 @@ enum Cmd {
 
 fn main() {
     let res = match Cli::parse().cmd {
+        Cmd::Review {
+            json,
+            port,
+            formats,
+            tectonic,
+        } => review(&json, port, &formats, tectonic.as_deref()),
         Cmd::Models {
             dir,
             download,
@@ -113,6 +131,38 @@ fn main() {
         eprintln!("error: {e}");
         std::process::exit(1);
     }
+}
+
+fn review(json: &Path, port: u16, formats: &str, tectonic: Option<&Path>) -> Result<()> {
+    let doc: Document = serde_json::from_str(&std::fs::read_to_string(json)?)?;
+    let out = json.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let name = json
+        .file_stem()
+        .ok_or("not a file")?
+        .to_string_lossy()
+        .into_owned();
+    let formats: Vec<String> = formats
+        .split(',')
+        .map(|f| f.trim().to_lowercase())
+        .collect();
+    let tectonic = tectonic.map(Path::to_path_buf);
+    let mut save = |doc: &mut Document| -> std::result::Result<String, String> {
+        write_exports(doc, &out, &name, &formats, tectonic.as_deref())
+            .map_err(|e| e.to_string())?;
+        let flagged = doc
+            .pages
+            .iter()
+            .flat_map(|p| &p.blocks)
+            .filter(|b| b.flagged == Some(true))
+            .count();
+        Ok(format!("saved and exported; {flagged} still flagged"))
+    };
+    makaar_core::review::Review {
+        doc,
+        json_path: json.to_path_buf(),
+    }
+    .serve(port, &mut save)?;
+    Ok(())
 }
 
 fn run_models(dir: &Path, download: bool, verify: bool) -> Result<()> {
@@ -262,6 +312,10 @@ fn recognize_pending(
                 )
                 .map_err(|e| e.to_string())?;
                 save_figures(&img, &mut page, &files, &c.name).map_err(|e| e.to_string())?;
+                // absolute, so the review screen finds the scan from any working directory
+                page.image = std::fs::canonicalize(&job.path)
+                    .ok()
+                    .map(|p| p.display().to_string());
                 Ok(page)
             });
         match res {
@@ -307,6 +361,44 @@ fn save_figures(img: &image::RgbImage, page: &mut Page, dir: &Path, name: &str) 
     Ok(())
 }
 
+/// Writes `<out>/<name>.{md,tex,pdf,docx}` for the requested formats, then the document JSON
+/// last so it carries the flags the exporters add (the review screen reads it).
+fn write_exports(
+    doc: &mut Document,
+    out: &Path,
+    name: &str,
+    formats: &[String],
+    tectonic: Option<&Path>,
+) -> Result<()> {
+    let stem = out.join(name);
+    let want = |f: &str| formats.iter().any(|x| x == f);
+    if want("md") {
+        std::fs::write(stem.with_extension("md"), export::markdown(doc))?;
+    }
+    if want("tex") {
+        let tectonic = tectonic
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::var_os("TECTONIC").map(PathBuf::from))
+            .unwrap_or_else(|| "tectonic".into());
+        match latex::export_checked(doc, &tectonic, out, name) {
+            Ok(_) => {}
+            Err(latex::LatexError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::write(stem.with_extension("tex"), latex::latex(doc))?;
+                eprintln!("tectonic not found: wrote {name}.tex without a compile check");
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    if want("docx") {
+        docx::export_docx(doc, out, &stem.with_extension("docx"))?;
+    }
+    std::fs::write(
+        stem.with_extension("json"),
+        serde_json::to_string_pretty(doc)?,
+    )?;
+    Ok(())
+}
+
 fn assemble_and_export(c: &Convert, queue: &Queue, state: &Path) -> Result<()> {
     let rows = queue.pages(JOB)?;
     let mut doc = Document {
@@ -325,38 +417,8 @@ fn assemble_and_export(c: &Convert, queue: &Queue, state: &Path) -> Result<()> {
             failed.push(job.path.clone());
         }
     }
+    write_exports(&mut doc, &c.out, &c.name, &c.formats, c.tectonic.as_deref())?;
     let stem = c.out.join(&c.name);
-    let want = |f: &str| c.formats.iter().any(|x| x == f);
-    if want("md") {
-        std::fs::write(stem.with_extension("md"), export::markdown(&doc))?;
-    }
-    if want("tex") {
-        let tectonic = c
-            .tectonic
-            .clone()
-            .or_else(|| std::env::var_os("TECTONIC").map(PathBuf::from))
-            .unwrap_or_else(|| "tectonic".into());
-        match latex::export_checked(&mut doc, &tectonic, &c.out, &c.name) {
-            Ok(_) => {}
-            Err(latex::LatexError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::write(stem.with_extension("tex"), latex::latex(&doc))?;
-                eprintln!(
-                    "tectonic not found: wrote {}.tex without a compile check",
-                    c.name
-                );
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
-    if want("docx") {
-        docx::export_docx(&mut doc, &c.out, &stem.with_extension("docx"))?;
-    }
-    // last, so it carries the flags the exporters added; the review screen reads this
-    std::fs::write(
-        stem.with_extension("json"),
-        serde_json::to_string_pretty(&doc)?,
-    )?;
-
     let flagged = doc
         .pages
         .iter()

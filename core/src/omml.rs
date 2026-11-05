@@ -656,8 +656,8 @@ fn write(n: &Node, out: &mut String) {
     }
 }
 
-/// `<m:oMath>` for a LaTeX formula (without `$` or `\(` delimiters).
-pub fn omml(latex: &str) -> Result<String, OmmlError> {
+/// Parses a formula into one node; several top-level `\\` rows become a one-column matrix.
+fn parse(latex: &str) -> Result<Node, OmmlError> {
     let mut p = Parser {
         toks: tokenize(latex),
         pos: 0,
@@ -673,17 +673,133 @@ pub fn omml(latex: &str) -> Result<String, OmmlError> {
             _ => return err("unbalanced }"),
         }
     }
-    let mut out = String::from("<m:oMath>");
-    if rows.len() > 1 {
-        write(
-            &Node::Matrix(rows.into_iter().map(|r| vec![Node::Group(r)]).collect()),
-            &mut out,
-        );
+    Ok(if rows.len() > 1 {
+        Node::Matrix(rows.into_iter().map(|r| vec![Node::Group(r)]).collect())
     } else {
-        write(&Node::Group(rows.pop().unwrap_or_default()), &mut out);
-    }
+        Node::Group(rows.pop().unwrap_or_default())
+    })
+}
+
+/// `<m:oMath>` for a LaTeX formula (without `$` or `\(` delimiters).
+pub fn omml(latex: &str) -> Result<String, OmmlError> {
+    let mut out = String::from("<m:oMath>");
+    write(&parse(latex)?, &mut out);
     out.push_str("</m:oMath>");
     Ok(out)
+}
+
+/// MathML (`<math>`) for a LaTeX formula, for previews in a browser.
+pub fn mathml(latex: &str, display: bool) -> Result<String, OmmlError> {
+    let mut out = String::from(if display {
+        "<math display=\"block\">"
+    } else {
+        "<math>"
+    });
+    write_mathml(&parse(latex)?, &mut out);
+    out.push_str("</math>");
+    Ok(out)
+}
+
+fn write_mathml(n: &Node, out: &mut String) {
+    let row = |n: &Node, out: &mut String| {
+        out.push_str("<mrow>");
+        write_mathml(n, out);
+        out.push_str("</mrow>");
+    };
+    match n {
+        Node::Run { s, upright, text } => {
+            if *text {
+                out.push_str(&format!("<mtext>{}</mtext>", esc(s)));
+            } else if *upright {
+                out.push_str(&format!("<mi mathvariant=\"normal\">{}</mi>", esc(s)));
+            } else {
+                for c in s.chars() {
+                    let tag = if c.is_alphabetic() {
+                        "mi"
+                    } else if c.is_ascii_digit() || c == '.' {
+                        "mn"
+                    } else {
+                        "mo"
+                    };
+                    out.push_str(&format!("<{tag}>{}</{tag}>", esc(&c.to_string())));
+                }
+            }
+        }
+        Node::Group(v) => {
+            out.push_str("<mrow>");
+            v.iter().for_each(|c| write_mathml(c, out));
+            out.push_str("</mrow>");
+        }
+        Node::Scripts { base, sub, sup } => {
+            let tag = match (sub, sup) {
+                (Some(_), Some(_)) => "msubsup",
+                (Some(_), None) => "msub",
+                (None, Some(_)) => "msup",
+                (None, None) => return write_mathml(base, out),
+            };
+            out.push_str(&format!("<{tag}>"));
+            row(base, out);
+            for part in [sub, sup].into_iter().flatten() {
+                row(part, out);
+            }
+            out.push_str(&format!("</{tag}>"));
+        }
+        Node::Frac(a, b) => {
+            out.push_str("<mfrac>");
+            row(a, out);
+            row(b, out);
+            out.push_str("</mfrac>");
+        }
+        Node::Root(None, body) => {
+            out.push_str("<msqrt>");
+            write_mathml(body, out);
+            out.push_str("</msqrt>");
+        }
+        Node::Root(Some(deg), body) => {
+            out.push_str("<mroot>");
+            row(body, out);
+            row(deg, out);
+            out.push_str("</mroot>");
+        }
+        Node::Delim(o, c, body) => {
+            out.push_str(&format!("<mrow><mo>{}</mo>", esc(o)));
+            write_mathml(body, out);
+            out.push_str(&format!("<mo>{}</mo></mrow>", esc(c)));
+        }
+        Node::Accent(ch, body) => {
+            out.push_str("<mover accent=\"true\">");
+            row(body, out);
+            out.push_str(&format!("<mo>{ch}</mo></mover>"));
+        }
+        Node::Bar(top, body) => {
+            let tag = if *top { "mover" } else { "munder" };
+            out.push_str(&format!("<{tag}>"));
+            row(body, out);
+            out.push_str(&format!(
+                "<mo>{}</mo></{tag}>",
+                if *top { '‾' } else { '_' }
+            ));
+        }
+        Node::Over(body, top) => {
+            out.push_str("<mover>");
+            row(body, out);
+            row(top, out);
+            out.push_str("</mover>");
+        }
+        Node::Matrix(rows) => {
+            out.push_str("<mtable>");
+            for r in rows {
+                out.push_str("<mtr>");
+                for c in r {
+                    out.push_str("<mtd>");
+                    write_mathml(c, out);
+                    out.push_str("</mtd>");
+                }
+                out.push_str("</mtr>");
+            }
+            out.push_str("</mtable>");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -721,6 +837,21 @@ mod tests {
         assert!(body("a < b").contains("&lt;"));
         assert!(body("\\log n \\le \\Theta(n)").contains("Θ"));
         assert!(body("\\overline{AB}").contains("<m:bar>"));
+    }
+
+    #[test]
+    fn mathml_preview() {
+        assert_eq!(
+            mathml("x^2", false).unwrap(),
+            "<math><mrow><msup><mrow><mi>x</mi></mrow><mrow><mn>2</mn></mrow></msup></mrow></math>"
+        );
+        let m = mathml("\\frac{a}{b} \\le \\sqrt{n}", true).unwrap();
+        assert!(
+            m.starts_with("<math display=\"block\">")
+                && m.contains("<mfrac>")
+                && m.contains("<msqrt>")
+        );
+        assert!(m.contains("<mo>≤</mo>"));
     }
 
     #[test]

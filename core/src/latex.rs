@@ -335,7 +335,8 @@ pub fn export_checked(
                 .text
                 .as_deref()
                 .is_some_and(|t| t.split("\n\n").any(has_unclosed_math));
-            if prose && unclosed {
+            // a block the reviewer edited is theirs; don't re-flag it on every save
+            if prose && unclosed && b.edited != Some(true) {
                 flag.push((p, i));
             }
         }
