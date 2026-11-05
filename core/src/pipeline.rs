@@ -28,6 +28,8 @@ pub struct PipelineConfig {
     pub page_tokens: u32,
     /// A specialist's text is kept when its mean character probability is at least this.
     pub accept: f64,
+    /// General-model blocks below this mean token probability are flagged for review.
+    pub flag_below: f64,
 }
 
 impl Default for PipelineConfig {
@@ -36,12 +38,17 @@ impl Default for PipelineConfig {
             max_overlap: 0.1,
             page_tokens: 4096,
             accept: ACCEPT,
+            flag_below: FLAG_BELOW,
         }
     }
 }
 
 /// Default specialist acceptance; see DECISIONS for the calibration.
 pub const ACCEPT: f64 = 0.98;
+
+/// PaddleOCR-VL's mean token probability is 0.75–0.89 on handwritten blocks and 0.91–1.00 on
+/// printed ones in the eval set; provisional until the test set calibrates it.
+pub const FLAG_BELOW: f64 = 0.9;
 
 /// Prose regions a line reader can handle. Code (`algorithm`) needs its layout kept, and the
 /// whole-page fallback is handwriting, so both go to the general model.
@@ -178,6 +185,9 @@ pub fn recognize_page_routed(
         let rec = engine.recognize(&region, task, budget)?;
         b.confidence = Some(rec.confidence());
         b.engine = Some(rec.engine.clone());
+        if rec.confidence() < cfg.flag_below {
+            b.flagged = Some(true);
+        }
         if rec.truncated {
             // Hit the budget: drop the repeated tail and send the block to review.
             b.flagged = Some(true);
@@ -287,6 +297,8 @@ mod tests {
         .unwrap();
         assert_eq!(page.blocks[0].text.as_deref(), Some("Text"));
         assert_eq!(general.0.len(), 3);
+        // Echo reports probability 0.5, below FLAG_BELOW
+        assert!(page.blocks.iter().all(|b| b.flagged == Some(true)));
     }
 
     #[test]
@@ -329,7 +341,8 @@ mod tests {
         assert_eq!(engine.0[1].2, MIN_TOKENS);
         assert_eq!(page.blocks[2].text, None);
         assert_eq!(page.blocks[1].confidence, Some(0.5));
-        assert_eq!(page.blocks[1].flagged, None);
+        assert_eq!(page.blocks[1].flagged, Some(true)); // 0.5 < FLAG_BELOW
+        assert_eq!(page.blocks[2].flagged, None); // figures aren't read
     }
 
     #[test]
