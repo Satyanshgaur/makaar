@@ -20,6 +20,8 @@ pub struct Block {
     pub id: String,
     #[serde(rename = "type")]
     pub kind: BlockType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub bbox: [f64; 4],
     pub order: u32,
     #[serde(skip_serializing_if = "Option::is_none")]

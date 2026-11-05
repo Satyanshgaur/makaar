@@ -36,6 +36,7 @@
       "properties": {
         "id": {"type": "string"},
         "type": {"enum": ["text", "heading", "formula", "table", "figure", "list", "caption", "handwriting"]},
+        "label": {"type": "string", "description": "Raw layout-model label, e.g. algorithm, header, formula_number"},
         "bbox": {"$ref": "#/$defs/bbox"},
         "order": {"type": "integer", "minimum": 0},
         "crop": {"type": "string"},
