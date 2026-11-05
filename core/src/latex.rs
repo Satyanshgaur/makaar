@@ -63,26 +63,50 @@ pub fn escape(s: &str) -> String {
     out
 }
 
-/// Escapes the prose of `s` but keeps `\(…\)`, `\[…\]`, `$$…$$` and `$…$` math as is.
-pub fn text_with_math(s: &str) -> String {
-    let mut out = String::new();
+/// A piece of engine text: prose, inline math, or display math (bodies without delimiters).
+#[derive(Debug, PartialEq)]
+pub enum Seg<'a> {
+    Text(&'a str),
+    Inline(&'a str),
+    Display(&'a str),
+}
+
+/// Splits `s` at `\(…\)`, `\[…\]`, `$$…$$` and `$…$`; an unclosed opener stays prose.
+pub fn math_segments(s: &str) -> Vec<Seg<'_>> {
+    let mut out = vec![];
     let mut rest = s;
     while let Some((start, open, close)) = next_math(rest) {
         let body_from = start + open.len();
         let Some(end) = rest[body_from..].find(close) else {
             break;
         };
-        out.push_str(&escape(&rest[..start]));
-        let body = &rest[body_from..body_from + end];
-        if open == "$$" || open == "\\[" {
-            out.push_str(&format!("\\[{body}\\]"));
-        } else {
-            out.push_str(&format!("\\({body}\\)"));
+        if start > 0 {
+            out.push(Seg::Text(&rest[..start]));
         }
+        let body = &rest[body_from..body_from + end];
+        out.push(if open == "$$" || open == "\\[" {
+            Seg::Display(body)
+        } else {
+            Seg::Inline(body)
+        });
         rest = &rest[body_from + end + close.len()..];
     }
-    out.push_str(&escape(rest));
+    if !rest.is_empty() {
+        out.push(Seg::Text(rest));
+    }
     out
+}
+
+/// Escapes the prose of `s` but keeps `\(…\)`, `\[…\]`, `$$…$$` and `$…$` math as is.
+pub fn text_with_math(s: &str) -> String {
+    math_segments(s)
+        .into_iter()
+        .map(|seg| match seg {
+            Seg::Text(t) => escape(t),
+            Seg::Inline(m) => format!("\\({m}\\)"),
+            Seg::Display(m) => format!("\\[{m}\\]"),
+        })
+        .collect()
 }
 
 /// True if `s` opens `\(`, `\[` or `$$` math it never closes: the engine likely lost text, and
