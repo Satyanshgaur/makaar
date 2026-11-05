@@ -135,49 +135,64 @@ impl ModelFile {
         Ok(sha256_file(&self.path(dir))? == self.sha256)
     }
 
-    /// Downloads to `<dest>.part`, hashing as it goes, and renames on a checksum match.
-    /// `progress(done, total)` is called every few MB.
-    pub fn download(
-        &self,
-        dir: &Path,
-        mut progress: impl FnMut(u64, u64),
-    ) -> Result<(), ModelError> {
-        let dest = self.path(dir);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let part = dest.with_extension("part");
-        let resp = ureq::get(&self.url())
-            .call()
-            .map_err(|e| ModelError::Http(self.file.into(), e.to_string()))?;
-        let mut body = resp.into_body().into_reader();
-        let mut out = std::fs::File::create(&part)?;
-        let mut hash = Sha256::new();
-        let mut buf = vec![0u8; 1 << 20];
-        let (mut done, mut last) = (0u64, 0u64);
-        loop {
-            let n = body.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            hash.update(&buf[..n]);
-            out.write_all(&buf[..n])?;
-            done += n as u64;
-            if done - last >= 8 << 20 {
-                progress(done, self.size);
-                last = done;
-            }
-        }
-        out.sync_all()?;
-        progress(done, self.size);
-        let got = hex(&hash.finalize());
-        if got != self.sha256 {
-            let _ = std::fs::remove_file(&part);
-            return Err(ModelError::Checksum(self.file.into(), got));
-        }
-        std::fs::rename(part, dest)?;
-        Ok(())
+    /// Downloads with [`fetch_verified`]. `progress(done, total)` is called every few MB.
+    pub fn download(&self, dir: &Path, progress: impl FnMut(u64, u64)) -> Result<(), ModelError> {
+        fetch_verified(
+            &self.url(),
+            &self.path(dir),
+            self.sha256,
+            self.size,
+            progress,
+        )
     }
+}
+
+/// Downloads `url` to `<dest>.part`, hashing as it goes, and renames it to `dest` only on a
+/// SHA-256 match; a mismatch deletes the partial file.
+pub fn fetch_verified(
+    url: &str,
+    dest: &Path,
+    sha256: &str,
+    size: u64,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<(), ModelError> {
+    let name = dest
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let part = dest.with_extension("part");
+    let resp = ureq::get(url)
+        .call()
+        .map_err(|e| ModelError::Http(name.clone(), e.to_string()))?;
+    let mut body = resp.into_body().into_reader();
+    let mut out = std::fs::File::create(&part)?;
+    let mut hash = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    let (mut done, mut last) = (0u64, 0u64);
+    loop {
+        let n = body.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buf[..n]);
+        out.write_all(&buf[..n])?;
+        done += n as u64;
+        if done - last >= 8 << 20 {
+            progress(done, size);
+            last = done;
+        }
+    }
+    out.sync_all()?;
+    progress(done, size);
+    let got = hex(&hash.finalize());
+    if got != sha256 {
+        let _ = std::fs::remove_file(&part);
+        return Err(ModelError::Checksum(name, got));
+    }
+    std::fs::rename(part, dest)?;
+    Ok(())
 }
 
 fn hex(bytes: &[u8]) -> String {

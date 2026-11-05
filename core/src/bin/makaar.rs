@@ -12,7 +12,7 @@ use makaar_core::ocr::PpOcr;
 use makaar_core::pipeline::{self, PipelineConfig};
 use makaar_core::queue::Queue;
 use makaar_core::sidecar::{self, LazyServer, SidecarConfig};
-use makaar_core::{docx, export, ingest, latex};
+use makaar_core::{docx, export, ingest, latex, runtime};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -72,6 +72,15 @@ enum Cmd {
         #[arg(long)]
         tectonic: Option<PathBuf>,
     },
+    /// First-run setup: download the models and llama.cpp's llama-server for this platform
+    /// (pinned builds, SHA-256 checked).
+    Setup {
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// llama.cpp build: cpu (works everywhere) or vulkan (most laptop GPUs).
+        #[arg(long, default_value = "cpu")]
+        backend: String,
+    },
     /// Show model status; download missing files or verify checksums.
     Models {
         #[arg(long)]
@@ -91,6 +100,7 @@ fn main() {
             formats,
             tectonic,
         } => review(&json, port, &formats, tectonic.as_deref()),
+        Cmd::Setup { dir, backend } => setup(&dir.unwrap_or_else(models::default_dir), &backend),
         Cmd::Models {
             dir,
             download,
@@ -162,6 +172,28 @@ fn review(json: &Path, port: u16, formats: &str, tectonic: Option<&Path>) -> Res
         json_path: json.to_path_buf(),
     }
     .serve(port, &mut save)?;
+    Ok(())
+}
+
+fn setup(dir: &Path, backend: &str) -> Result<()> {
+    let backend = match backend {
+        "cpu" => runtime::Backend::Cpu,
+        "vulkan" => runtime::Backend::Vulkan,
+        other => return Err(format!("unknown backend {other}; use cpu or vulkan").into()),
+    };
+    run_models(dir, true, false)?;
+    match runtime::installed_server(dir) {
+        Some(p) => println!("llama-server: {} (already installed)", p.display()),
+        None => {
+            eprintln!("downloading llama.cpp {} ({backend:?})", runtime::LLAMA_TAG);
+            let p = runtime::install(dir, backend, |done, total| {
+                eprint!("\r  {} / {} MB", done >> 20, total >> 20);
+            })?;
+            eprintln!();
+            println!("llama-server: {}", p.display());
+        }
+    }
+    println!("ready: makaar convert <pages> -o <out>");
     Ok(())
 }
 
@@ -281,7 +313,7 @@ fn recognize_pending(
         Some(u) => Box::new(OpenAiEngine::new("paddleocr-vl-1.6", u)),
         None => Box::new(LazyServer::new(
             "paddleocr-vl-1.6",
-            sidecar::find_binary().ok_or(sidecar::SidecarError::NotFound)?,
+            sidecar::find_binary(&c.models).ok_or(sidecar::SidecarError::NotFound)?,
             SidecarConfig {
                 model: models::PADDLE_VL.path(&c.models),
                 mmproj: models::PADDLE_VL_MMPROJ.path(&c.models),

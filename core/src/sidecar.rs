@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SidecarError {
-    #[error("llama-server not found; set MAKAAR_LLAMA_SERVER or put llama-server on PATH")]
+    #[error(
+        "llama-server not found; run `makaar setup`, set MAKAAR_LLAMA_SERVER, or put it on PATH"
+    )]
     NotFound,
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
@@ -32,20 +34,34 @@ pub struct LlamaServer {
     pub url: String,
 }
 
-/// `$MAKAAR_LLAMA_SERVER`, else `llama-server` beside this executable, else on PATH.
-pub fn find_binary() -> Option<PathBuf> {
+/// `$MAKAAR_LLAMA_SERVER`, else `llama-server` beside this executable, else the one
+/// `makaar setup` installed under `models`, else on PATH.
+pub fn find_binary(models: &Path) -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("MAKAAR_LLAMA_SERVER") {
         return Some(p.into());
     }
+    if let Some(p) = beside_exe().or_else(|| crate::runtime::installed_server(models)) {
+        return Some(p);
+    }
+    on_path()
+}
+
+fn beside_exe() -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "llama-server.exe"
     } else {
         "llama-server"
     };
     let beside = std::env::current_exe().ok()?.parent()?.join(name);
-    if beside.is_file() {
-        return Some(beside);
-    }
+    beside.is_file().then_some(beside)
+}
+
+fn on_path() -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
             .map(|d| d.join(name))
