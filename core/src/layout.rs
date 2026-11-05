@@ -266,14 +266,28 @@ pub struct PpDocLayoutV3 {
     pub config: LayoutConfig,
 }
 
+/// The process's one ONNX Runtime environment (ORT refuses a second), shared by every model.
+/// ORT's own telemetry is off: nothing leaves the laptop.
+pub(crate) fn ort_env() -> Result<ort::environment::Environment, String> {
+    static ENV: std::sync::Mutex<Option<ort::environment::Environment>> =
+        std::sync::Mutex::new(None);
+    let mut env = ENV.lock().map_err(|e| e.to_string())?;
+    if env.is_none() {
+        *env = Some(
+            ort::init()
+                .with_name("makaar")
+                .with_telemetry(false)
+                .build()
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    Ok(env.clone().expect("set above"))
+}
+
 impl PpDocLayoutV3 {
     /// `threads` caps ONNX Runtime's intra-op pool so a batch leaves the laptop usable.
     pub fn load(model: &Path, threads: usize) -> Result<Self, LayoutError> {
-        // ONNX Runtime's own telemetry is off: nothing leaves the laptop.
-        let env = ort::init()
-            .with_name("makaar")
-            .with_telemetry(false)
-            .build()?;
+        let env = ort_env().map_err(LayoutError::Ort)?;
         let session = Session::builder(&env)?
             .with_intra_threads(threads)?
             .commit_from_file(model)?;

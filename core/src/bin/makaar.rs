@@ -5,12 +5,13 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 use makaar_core::document::{BlockType, Document, Page};
-use makaar_core::engine::OpenAiEngine;
+use makaar_core::engine::{Engine, OpenAiEngine};
 use makaar_core::layout::PpDocLayoutV3;
 use makaar_core::models::{self, REQUIRED};
+use makaar_core::ocr::PpOcr;
 use makaar_core::pipeline::{self, PipelineConfig};
 use makaar_core::queue::Queue;
-use makaar_core::sidecar::{self, LlamaServer, SidecarConfig};
+use makaar_core::sidecar::{self, LazyServer, SidecarConfig};
 use makaar_core::{docx, export, ingest, latex};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -55,6 +56,9 @@ enum Cmd {
         /// Discard earlier job state in the output folder and start over.
         #[arg(long)]
         fresh: bool,
+        /// Send every region to the general model (no PP-OCR specialist).
+        #[arg(long)]
+        no_specialist: bool,
     },
     /// Show model status; download missing files or verify checksums.
     Models {
@@ -85,6 +89,7 @@ fn main() {
             models,
             tectonic,
             fresh,
+            no_specialist,
         } => convert(&Convert {
             inputs,
             out,
@@ -101,6 +106,7 @@ fn main() {
             models: models.unwrap_or_else(models::default_dir),
             tectonic,
             fresh,
+            no_specialist,
         }),
     };
     if let Err(e) = res {
@@ -153,6 +159,7 @@ struct Convert {
     models: PathBuf,
     tectonic: Option<PathBuf>,
     fresh: bool,
+    no_specialist: bool,
 }
 
 fn convert(c: &Convert) -> Result<()> {
@@ -202,7 +209,8 @@ fn recognize_pending(
 ) -> Result<()> {
     let missing: Vec<&str> = REQUIRED
         .iter()
-        .filter(|m| (c.server.is_none() || m.dest.ends_with(".onnx")) && !m.present(&c.models))
+        .filter(|m| c.server.is_none() || !m.dest.starts_with("paddleocr-vl"))
+        .filter(|m| !m.present(&c.models))
         .map(|m| m.dest)
         .collect();
     if !missing.is_empty() {
@@ -214,31 +222,26 @@ fn recognize_pending(
         .into());
     }
     let mut layout = PpDocLayoutV3::load(&models::LAYOUT.path(&c.models), c.threads)?;
-    let _server; // kept alive until recognition ends
-    let url = match &c.server {
-        Some(u) => u.clone(),
-        None => {
-            let bin = sidecar::find_binary().ok_or(sidecar::SidecarError::NotFound)?;
-            eprintln!("starting {} …", bin.display());
-            let t = Instant::now();
-            let s = LlamaServer::start(
-                &bin,
-                &SidecarConfig {
-                    model: models::PADDLE_VL.path(&c.models),
-                    mmproj: models::PADDLE_VL_MMPROJ.path(&c.models),
-                    threads: c.threads,
-                    gpu_layers: c.gpu_layers,
-                    ctx: 8192,
-                    log: state.join("llama-server.log"),
-                },
-            )?;
-            eprintln!("model server ready in {:.0}s", t.elapsed().as_secs_f64());
-            let url = s.url.clone();
-            _server = s;
-            url
-        }
+    let mut ocr = PpOcr::load(
+        models::OCR_DET.path(&c.models).parent().unwrap(),
+        models::OCR_REC.path(&c.models).parent().unwrap(),
+        c.threads,
+    )?;
+    let mut engine: Box<dyn Engine> = match &c.server {
+        Some(u) => Box::new(OpenAiEngine::new("paddleocr-vl-1.6", u)),
+        None => Box::new(LazyServer::new(
+            "paddleocr-vl-1.6",
+            sidecar::find_binary().ok_or(sidecar::SidecarError::NotFound)?,
+            SidecarConfig {
+                model: models::PADDLE_VL.path(&c.models),
+                mmproj: models::PADDLE_VL_MMPROJ.path(&c.models),
+                threads: c.threads,
+                gpu_layers: c.gpu_layers,
+                ctx: 8192,
+                log: state.join("llama-server.log"),
+            },
+        )),
     };
-    let mut engine = OpenAiEngine::new("paddleocr-vl-1.6", &url);
     let cfg = PipelineConfig::default();
     let index = |id: i64| rows.iter().position(|(p, _)| p.id == id).unwrap_or(0) as u32;
     let total = rows.len();
@@ -249,8 +252,15 @@ fn recognize_pending(
         let res = ingest::load_page(Path::new(&job.path))
             .map_err(|e| e.to_string())
             .and_then(|img| {
-                let mut page = pipeline::recognize_page(&img, i, &mut layout, &mut engine, &cfg)
-                    .map_err(|e| e.to_string())?;
+                let mut page = pipeline::recognize_page_routed(
+                    &img,
+                    i,
+                    &mut layout,
+                    (!c.no_specialist).then_some(&mut ocr as &mut dyn Engine),
+                    engine.as_mut(),
+                    &cfg,
+                )
+                .map_err(|e| e.to_string())?;
                 save_figures(&img, &mut page, &files, &c.name).map_err(|e| e.to_string())?;
                 Ok(page)
             });

@@ -7,6 +7,7 @@ pub mod latex;
 pub mod omml;
 pub mod layout;
 pub mod models;
+pub mod ocr;
 pub mod pipeline;
 pub mod queue;
 pub mod sidecar;

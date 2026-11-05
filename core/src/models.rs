@@ -54,8 +54,43 @@ pub const PADDLE_VL_MMPROJ: ModelFile = ModelFile {
     size: 881_770_560,
 };
 
+pub const OCR_DET: ModelFile = ModelFile {
+    repo: "PaddlePaddle/PP-OCRv6_small_det_onnx",
+    rev: "28fe5895c24fd108c19eb3e8479f4ab385fbfc62",
+    file: "inference.onnx",
+    dest: "pp-ocrv6-small-det/inference.onnx",
+    sha256: "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+    size: 9_880_512,
+};
+
+pub const OCR_REC: ModelFile = ModelFile {
+    repo: "PaddlePaddle/PP-OCRv6_small_rec_onnx",
+    rev: "b8f84f0b80c529de40b4fbb3544b84fa7233a513",
+    file: "inference.onnx",
+    dest: "pp-ocrv6-small-rec/inference.onnx",
+    sha256: "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+    size: 21_159_378,
+};
+
+/// The recognizer's character dictionary.
+pub const OCR_REC_DICT: ModelFile = ModelFile {
+    repo: "PaddlePaddle/PP-OCRv6_small_rec_onnx",
+    rev: "b8f84f0b80c529de40b4fbb3544b84fa7233a513",
+    file: "inference.yml",
+    dest: "pp-ocrv6-small-rec/inference.yml",
+    sha256: "ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1",
+    size: 150_579,
+};
+
 /// Everything `makaar convert` needs.
-pub const REQUIRED: [ModelFile; 3] = [LAYOUT, PADDLE_VL, PADDLE_VL_MMPROJ];
+pub const REQUIRED: [ModelFile; 6] = [
+    LAYOUT,
+    OCR_DET,
+    OCR_REC,
+    OCR_REC_DICT,
+    PADDLE_VL,
+    PADDLE_VL_MMPROJ,
+];
 
 /// `$MAKAAR_MODELS`, else `./models` if it holds the layout model (a source checkout), else the
 /// per-user data directory.
