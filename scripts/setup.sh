@@ -11,5 +11,6 @@ Models (not downloaded automatically):
   hf download XingChen-AGI/TeleOCR --local-dir models/teleocr                         # serve with vLLM
 Serve Paddle:  llama-server -m models/paddleocr-vl-1.6/<Q8_0>.gguf --mmproj models/paddleocr-vl-1.6/<mmproj>.gguf --port 8080
 Layout demo:   cargo run --release --manifest-path core/Cargo.toml --example layout -- models/pp-doclayoutv3/inference.onnx eval/data/printed
+LaTeX export:  cargo run --manifest-path core/Cargo.toml --example latex -- out/tex notes <pipeline-out>/*/*.json
 Run eval:      cd eval && uv run python -m makaar_eval.runner <dataset> --name paddle-q8
 MSG
