@@ -57,6 +57,20 @@ impl Queue {
         Ok(())
     }
 
+    /// All pages of `job` in enqueue order, with their state.
+    pub fn pages(&self, job: &str) -> Result<Vec<(PageJob, String)>, QueueError> {
+        let mut st = self.db.prepare("SELECT id, job, path, state FROM pages WHERE job=?1 ORDER BY id")?;
+        let rows = st.query_map(params![job], |r| {
+            Ok((PageJob { id: r.get(0)?, job: r.get(1)?, path: r.get(2)? }, r.get(3)?))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Returns `failed` pages of `job` to `pending` so a rerun tries them again; returns how many.
+    pub fn retry_failed(&self, job: &str) -> Result<usize, QueueError> {
+        Ok(self.db.execute("UPDATE pages SET state='pending' WHERE job=?1 AND state='failed'", params![job])?)
+    }
+
     /// Returns pages left `running` by a crash to `pending`; returns how many.
     pub fn recover(&self) -> Result<usize, QueueError> {
         Ok(self.db.execute("UPDATE pages SET state='pending' WHERE state='running'", [])?)
@@ -78,6 +92,11 @@ mod tests {
         let a2 = q.claim("j").unwrap().unwrap();
         assert_eq!(a2.path, "a.png");
         q.finish(a2.id, true).unwrap();
+        let b = q.claim("j").unwrap().unwrap();
+        q.finish(b.id, false).unwrap();
+        let states: Vec<String> = q.pages("j").unwrap().into_iter().map(|(_, s)| s).collect();
+        assert_eq!(states, ["done", "failed"]);
+        assert_eq!(q.retry_failed("j").unwrap(), 1);
         assert_eq!(q.claim("j").unwrap().unwrap().path, "b.png");
         assert!(q.claim("other").unwrap().is_none());
     }

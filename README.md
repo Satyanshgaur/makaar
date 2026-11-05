@@ -2,12 +2,22 @@
 
 Open-source, offline notes-to-LaTeX/Markdown/Word converter. See `docs/research.md` for the research and build plan, and `docs/DECISIONS.md` for where we diverge from it.
 
-Status: Phase 2–3 (ingest, layout, per-region recognition, Markdown, compile-checked LaTeX and Word export in `core/`). Gate 1 is still open: only 10 eval pages so far.
+Status: Phase 3. The `makaar` CLI converts page images end to end, offline: layout, per-region recognition, then Markdown, compile-checked LaTeX and Word. Gate 1 is still open: only 10 eval pages so far.
+
+## Try it
+
+```
+cargo build --release --manifest-path core/Cargo.toml
+core/target/release/makaar models --download        # ~1.9 GB, SHA-256 checked
+core/target/release/makaar convert scans/ -o out/    # out/notes.{md,tex,pdf,docx,json}
+```
+
+You need `llama-server` from llama.cpp (on PATH or `$MAKAAR_LLAMA_SERVER`). `tectonic` is optional and enables the LaTeX compile check. Use `--gpu-layers 0` for CPU only. Rerun the same command to resume an interrupted job.
 
 ## Layout
 - `schema/document.schema.json` – the job document (pages → blocks), single source of truth for review UI and exports
 - `eval/` – evaluation harness (metrics, engine adapters, runner)
-- `core/` – Rust core: document model, resumable queue, ingest, layout (PP-DocLayoutV3 on ONNX Runtime)
+- `core/` – Rust core and the `makaar` CLI: document model, resumable queue, ingest, layout (PP-DocLayoutV3 on ONNX Runtime), recognition via a llama-server sidecar, exports, model download
 
 ## Dev
     cd eval && uv run pytest
