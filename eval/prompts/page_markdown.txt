@@ -1,0 +1,6 @@
+Transcribe this page into Markdown exactly as written.
+- Keep every word, number and symbol in the original order; do not fix spelling, grammar or mistakes, and do not add, explain or summarize anything.
+- Use LaTeX for math: \( ... \) inline and \[ ... \] for displayed equations.
+- Use Markdown headings, lists and tables where the page has them; put code in fenced blocks.
+- For a diagram or figure, transcribe only the text labels in it.
+- Output only the transcription.
