@@ -38,8 +38,16 @@ impl Region {
     }
 }
 
+/// Regions in reading order, plus how messy the raw layout was: `overlap_score` of the regions
+/// before container boxes were removed. The pipeline reads high-overlap pages whole.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PageLayout {
+    pub regions: Vec<Region>,
+    pub overlap: f32,
+}
+
 pub trait LayoutDetector {
-    fn detect(&mut self, page: &RgbImage) -> Result<Vec<Region>, LayoutError>;
+    fn detect(&mut self, page: &RgbImage) -> Result<PageLayout, LayoutError>;
 }
 
 #[derive(Debug, Clone)]
@@ -142,7 +150,7 @@ fn inside(inner: &[f32; 4], outer: &[f32; 4]) -> f32 {
 /// Turns raw rows `[class, score, x0, y0, x1, y1, order]` (page pixels) into regions in reading
 /// order. Rows are visited by descending score; a row is dropped if it duplicates or nests inside
 /// a kept region, or if it is an inline formula inside kept text (recognized with that text).
-pub fn postprocess(rows: &[[f32; 7]], width: u32, height: u32, cfg: &LayoutConfig) -> Vec<Region> {
+pub fn postprocess(rows: &[[f32; 7]], width: u32, height: u32, cfg: &LayoutConfig) -> PageLayout {
     let (w, h) = (width as f32, height as f32);
     let mut cands: Vec<Region> = rows
         .iter()
@@ -178,8 +186,52 @@ pub fn postprocess(rows: &[[f32; 7]], width: u32, height: u32, cfg: &LayoutConfi
             kept.push(c);
         }
     }
+    let overlap = overlap_score(&kept);
+    // A non-figure box around two or more kept regions repeats their text (e.g. a bullet list
+    // also boxed as `algorithm`); keep the finer regions. Figures keep their inner labels.
+    let containers: Vec<usize> = (0..kept.len())
+        .filter(|&i| {
+            kept[i].kind() != BlockType::Figure
+                && kept
+                    .iter()
+                    .enumerate()
+                    .filter(|&(j, r)| j != i && inside(&r.bbox, &kept[i].bbox) > cfg.contained)
+                    .count()
+                    >= 2
+        })
+        .collect();
+    let mut kept: Vec<Region> = kept
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !containers.contains(i))
+        .map(|(_, r)| r)
+        .collect();
     kept.sort_by(|a, b| a.order.total_cmp(&b.order));
-    kept
+    PageLayout {
+        regions: kept,
+        overlap,
+    }
+}
+
+/// Overlap between non-figure regions: summed pairwise intersection over summed area. Clean
+/// printed layouts score ~0; handwritten pages whose text bands overlap score 0.1–0.4, and their
+/// regions would read the same lines twice.
+pub fn overlap_score(regions: &[Region]) -> f32 {
+    let rs: Vec<&Region> = regions
+        .iter()
+        .filter(|r| r.kind() != BlockType::Figure)
+        .collect();
+    let total: f32 = rs.iter().map(|r| area(&r.bbox)).sum();
+    if total == 0.0 {
+        return 0.0;
+    }
+    let mut over = 0.0;
+    for (i, a) in rs.iter().enumerate() {
+        for b in &rs[i + 1..] {
+            over += intersection(&a.bbox, &b.bbox);
+        }
+    }
+    over / total
 }
 
 /// Regions → document blocks with dense reading order. Ids are `p{page}-b{n}`.
@@ -233,7 +285,7 @@ impl PpDocLayoutV3 {
 }
 
 impl LayoutDetector for PpDocLayoutV3 {
-    fn detect(&mut self, page: &RgbImage) -> Result<Vec<Region>, LayoutError> {
+    fn detect(&mut self, page: &RgbImage) -> Result<PageLayout, LayoutError> {
         let (w, h) = page.dimensions();
         let small = image::imageops::resize(page, SIDE, SIDE, FilterType::CatmullRom);
         let plane = (SIDE * SIDE) as usize;
@@ -278,9 +330,39 @@ mod tests {
             row("algorithm", 0.43, [117., 76., 357., 288.], 27.),
             row("paragraph_title", 0.57, [110., 32., 441., 63.], 10.),
         ];
-        let r = postprocess(&rows, 607, 806, &LayoutConfig::default());
+        let r = postprocess(&rows, 607, 806, &LayoutConfig::default()).regions;
         let got: Vec<_> = r.iter().map(|r| (r.label, r.score)).collect();
         assert_eq!(got, [("paragraph_title", 0.57), ("algorithm", 0.71)]);
+    }
+
+    #[test]
+    fn container_of_two_regions_is_dropped() {
+        // From printed2.png: the bullet list is boxed as `algorithm` and as separate `text`s.
+        let rows = [
+            row("algorithm", 0.99, [96., 61., 549., 349.], 20.),
+            row("text", 0.96, [106., 67., 517., 129.], 10.),
+            row("text", 0.98, [105., 133., 518., 196.], 30.),
+            row("image", 0.9, [300., 400., 600., 700.], 40.),
+            row("text", 0.9, [320., 420., 400., 440.], 41.),
+            row("text", 0.9, [320., 450., 400., 470.], 42.),
+        ];
+        let r = postprocess(&rows, 607, 806, &LayoutConfig::default()).regions;
+        let got: Vec<_> = r.iter().map(|r| r.label).collect();
+        assert_eq!(got, ["text", "text", "image", "text", "text"]);
+        assert!(overlap_score(&r) < 0.01);
+        let raw = postprocess(&rows, 607, 806, &LayoutConfig::default()).overlap;
+        assert!(raw > 0.2, "{raw}");
+    }
+
+    #[test]
+    fn overlap_score_counts_shared_area() {
+        let rows = [
+            row("text", 0.9, [0., 0., 100., 100.], 1.),
+            row("text", 0.8, [0., 75., 100., 175.], 2.),
+        ];
+        let r = postprocess(&rows, 200, 200, &LayoutConfig::default()).regions;
+        assert_eq!(r.len(), 2);
+        assert!((overlap_score(&r) - 0.125).abs() < 1e-6);
     }
 
     #[test]
@@ -289,7 +371,7 @@ mod tests {
             row("display_formula", 0.32, [53., 35., 283., 64.], 5.),
             row("text", 0.36, [53., 35., 283., 64.], 5.),
         ];
-        let r = postprocess(&rows, 607, 806, &LayoutConfig::default());
+        let r = postprocess(&rows, 607, 806, &LayoutConfig::default()).regions;
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].label, "text");
     }
@@ -301,7 +383,7 @@ mod tests {
             row("inline_formula", 0.38, [271., 256., 408., 289.], 131.),
             row("inline_formula", 0.33, [411., 500., 470., 520.], 186.),
         ];
-        let r = postprocess(&rows, 607, 806, &LayoutConfig::default());
+        let r = postprocess(&rows, 607, 806, &LayoutConfig::default()).regions;
         let got: Vec<_> = r.iter().map(|r| r.bbox[1]).collect();
         assert_eq!(got, [247., 500.]);
     }
@@ -313,7 +395,7 @@ mod tests {
             row("text", 0.29, [0., 0., 10., 10.], 1.),
             row("doc_title", 0.8, [10., 10., 200., 40.], 2.),
         ];
-        let r = postprocess(&rows, 607, 806, &LayoutConfig::default());
+        let r = postprocess(&rows, 607, 806, &LayoutConfig::default()).regions;
         assert_eq!(r.len(), 2);
         assert_eq!(r[0].label, "doc_title");
         assert_eq!(r[1].bbox, [0., 400., 607., 420.]);
@@ -332,7 +414,7 @@ mod tests {
         let mut m =
             PpDocLayoutV3::load(&root.join("models/pp-doclayoutv3/inference.onnx"), 4).unwrap();
         let page = crate::ingest::load_page(&root.join("eval/data/printed/printed3.png")).unwrap();
-        let r = m.detect(&page).unwrap();
+        let r = m.detect(&page).unwrap().regions;
         assert!(r.iter().any(|r| r.label == "paragraph_title"), "{r:?}");
         assert!(r.iter().filter(|r| r.label == "text").count() >= 5, "{r:?}");
     }

@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (i, path) in ingest::list_pages(&inputs)?.iter().enumerate() {
         let img = ingest::load_page(path)?;
         let t = Instant::now();
-        let regions = det.detect(&img)?;
+        let regions = det.detect(&img)?.regions;
         eprintln!(
             "{} {} regions {:.2}s",
             path.display(),
