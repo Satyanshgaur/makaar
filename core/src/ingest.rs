@@ -60,11 +60,8 @@ fn render_pdf_page(path: &Path, n: usize) -> Result<RgbImage, IngestError> {
     );
     let (pw, ph) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
     // opaque (white background), so premultiplied RGBA is plain RGBA
-    let rgb: Vec<u8> = pixmap
-        .data_as_u8_slice()
-        .chunks_exact(4)
-        .flat_map(|px| [px[0], px[1], px[2]])
-        .collect();
+    let (pixels, _) = pixmap.data_as_u8_slice().as_chunks::<4>();
+    let rgb: Vec<u8> = pixels.iter().flat_map(|px| [px[0], px[1], px[2]]).collect();
     RgbImage::from_raw(pw, ph, rgb)
         .ok_or_else(|| IngestError::Pdf(path.into(), "bad pixmap size".into()))
 }
