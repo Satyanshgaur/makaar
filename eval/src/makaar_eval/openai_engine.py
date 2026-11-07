@@ -87,6 +87,6 @@ class OpenAIEngine:
             body["logprobs"] = True
         choice = self._post(body)["choices"][0]
         lp = (choice.get("logprobs") or {}).get("content") or []
-        return Recognition(text=choice["message"]["content"] or "",
+        return Recognition(text=choice["message"].get("content") or "",
                            token_probs=[math.exp(t["logprob"]) for t in lp],
                            engine=self.name)

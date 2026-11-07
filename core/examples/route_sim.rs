@@ -47,6 +47,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 spec[i] = Some((pipeline::reflow(&rec.text), rec.confidence()));
             }
         }
+        // every eligible block's specialist reading, accepted or not, for block-level calibration
+        let dump: serde_json::Map<String, serde_json::Value> = page
+            .blocks
+            .iter()
+            .zip(&spec)
+            .filter_map(|(b, s)| {
+                s.as_ref()
+                    .map(|(t, c)| (b.id.clone(), serde_json::json!([t, c])))
+            })
+            .collect();
+        let dest = out.join("specialist").join(&rel);
+        std::fs::create_dir_all(dest.parent().unwrap())?;
+        std::fs::write(dest, serde_json::Value::Object(dump).to_string())?;
         let confs: Vec<String> = spec
             .iter()
             .flatten()
