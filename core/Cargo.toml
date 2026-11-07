@@ -19,3 +19,4 @@ clap = { version = "4", features = ["derive"] }
 tiny_http = "0.12"
 tar = "0.4"
 flate2 = "1"
+hayro = "0.9"

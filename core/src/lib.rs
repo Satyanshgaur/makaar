@@ -1,4 +1,5 @@
 pub mod document;
+pub mod app;
 pub mod docx;
 pub mod engine;
 pub mod export;
