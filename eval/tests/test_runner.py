@@ -28,7 +28,7 @@ def test_runner_end_to_end(tmp_path: Path, capsys):
     (d / "p1.png").write_bytes(b"\x89PNG")
     (d / "p1.md").write_text("hello world")
     main([str(tmp_path / "data"), "--name", "fake", "--url", f"http://127.0.0.1:{srv.server_port}",
-          "--out", str(tmp_path / "out")])
+          "--out", str(tmp_path / "out"), "--preds", str(tmp_path / "preds")])
     res = json.loads((tmp_path / "out" / "fake.json").read_text())
     assert res["summary"]["printed"]["ned_mean"] == 0.0
     srv.shutdown()
@@ -82,7 +82,7 @@ def test_api_key_retry_and_full_url(tmp_path: Path):
     url = f"http://127.0.0.1:{srv.server_port}/v1beta/openai/chat/completions"
     main([str(tmp_path / "data"), "--name", "g", "--url", url, "--model", "gemini-x",
           "--api-key-file", str(tmp_path / "key"), "--no-logprobs", "--prompt-file", str(tmp_path / "prompt.txt"),
-          "--reasoning-effort", "low", "--out", str(tmp_path / "out")])
+          "--reasoning-effort", "low", "--out", str(tmp_path / "out"), "--preds", str(tmp_path / "preds")])
     srv.shutdown()
     path, auth, body = Gemini.seen[-1]
     assert len(Gemini.seen) == 2
@@ -92,3 +92,45 @@ def test_api_key_retry_and_full_url(tmp_path: Path):
     assert body["messages"][0]["content"][0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     assert body["messages"][0]["content"][1]["text"] == "Transcribe."
     assert json.loads((tmp_path / "out" / "g.json").read_text())["summary"]["printed"]["ned_mean"] == 0.0
+
+
+class DailyQuota(http.server.BaseHTTPRequestHandler):
+    """Answers once, then reports the daily quota as spent."""
+    calls = 0
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        DailyQuota.calls += 1
+        if DailyQuota.calls > 1:
+            out = b'{"error": {"code": 429, "message": "Generate content requests per day limit exceeded"}}'
+            self.send_response(429)
+        else:
+            out = json.dumps({"choices": [{"message": {"content": "hello world"}}]}).encode()
+            self.send_response(200)
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):
+        pass
+
+
+def test_daily_quota_stops_and_rerun_resumes(tmp_path: Path):
+    srv = http.server.HTTPServer(("127.0.0.1", 0), DailyQuota)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    d = tmp_path / "data" / "printed"
+    d.mkdir(parents=True)
+    for n in ["p1", "p2"]:
+        (d / f"{n}.png").write_bytes(b"\x89PNG")
+        (d / f"{n}.md").write_text("hello world")
+    args = [str(tmp_path / "data"), "--name", "g", "--url", f"http://127.0.0.1:{srv.server_port}",
+            "--no-logprobs", "--out", str(tmp_path / "out"), "--preds", str(tmp_path / "preds")]
+    main(args)  # p1 answered, p2 hits the quota: stops without retrying, keeps p1
+    assert DailyQuota.calls == 2
+    assert json.loads((tmp_path / "out" / "g.json").read_text())["summary"]["printed"]["pages"] == 1
+    assert (tmp_path / "preds" / "printed" / "p1.md").read_text() == "hello world"
+    DailyQuota.calls = 0  # next day: p1 comes from disk, only p2 is requested
+    main(args)
+    srv.shutdown()
+    assert DailyQuota.calls == 1
+    assert json.loads((tmp_path / "out" / "g.json").read_text())["summary"]["printed"]["pages"] == 2

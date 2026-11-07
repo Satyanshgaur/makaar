@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import math
 import time
 import urllib.error
@@ -31,6 +32,10 @@ def mime(image: bytes) -> str:
     return "image/jpeg" if image[:3] == b"\xff\xd8\xff" else "image/png"
 
 
+class QuotaExhausted(RuntimeError):
+    """The provider's daily quota is used up; retrying today won't help."""
+
+
 class OpenAIEngine:
     def __init__(self, name: str, base_url: str, model: str = "default",
                  prompts: dict[str, str] | None = None, max_tokens: int = 4096,
@@ -57,8 +62,11 @@ class OpenAIEngine:
                 with urllib.request.urlopen(req, timeout=self.timeout) as r:
                     return json.load(r)
             except urllib.error.HTTPError as e:
+                detail = e.read()[:2000]
+                if e.code == 429 and re.search(rb"per ?day|PerDay", detail, re.I):
+                    raise QuotaExhausted(f"daily quota exhausted at {self.url}") from None
                 if e.code not in RETRY_STATUS or attempt == self.retries:
-                    raise RuntimeError(f"{e.code} from {self.url}: {e.read()[:500]!r}") from None
+                    raise RuntimeError(f"{e.code} from {self.url}: {detail[:500]!r}") from None
                 wait = float(e.headers.get("Retry-After") or 0) or min(60.0, 5.0 * 2 ** attempt)
                 time.sleep(wait)
         raise AssertionError("unreachable")

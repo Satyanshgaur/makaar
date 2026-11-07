@@ -2,7 +2,7 @@
 name = "makaar-eval"
 version = "0.0.1"
 requires-python = ">=3.11"
-dependencies = ["jsonschema>=4"]
+dependencies = ["jsonschema>=4", "rapidfuzz>=3"]
 
 [dependency-groups]
 dev = ["pytest>=8"]

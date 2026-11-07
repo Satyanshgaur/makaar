@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .engine import Engine, Region
 from .metrics import clean_text, has_loop, latex_compiles, normalized_edit_distance
-from .openai_engine import PADDLE_PROMPTS, OpenAIEngine
+from .openai_engine import PADDLE_PROMPTS, OpenAIEngine, QuotaExhausted
 
 IMG_EXT = {".png", ".jpg", ".jpeg"}
 DISPLAY_MATH = re.compile(r"\$\$(.+?)\$\$", re.S)
@@ -27,12 +27,19 @@ def pages(root: Path):
             yield img.relative_to(root).parent.name, img, truth
 
 
+def scores(text: str, truth: str) -> dict:
+    """Raw NED, NED on clean text, and NED ignoring all whitespace (LaTeX spacing like CROHME's
+    `x ^ { 2 }` vs `x^{2}` is not an error)."""
+    a, b = clean_text(text), clean_text(truth)
+    return {"ned": normalized_edit_distance(text, truth), "ned_clean": normalized_edit_distance(a, b),
+            "ned_compact": normalized_edit_distance("".join(a.split()), "".join(b.split()))}
+
+
 def score_page(engine: Engine, img: Path, truth: Path, check_latex: bool) -> dict:
     t0 = time.perf_counter()
     rec = engine.recognize(Region(img.read_bytes(), (0, 0, 0, 0), "page"), "text")
     secs = time.perf_counter() - t0
-    out = {"page": str(img), "seconds": secs, "ned": normalized_edit_distance(rec.text, truth.read_text()),
-           "ned_clean": normalized_edit_distance(clean_text(rec.text), clean_text(truth.read_text())),
+    out = {"page": str(img), "seconds": secs, **scores(rec.text, truth.read_text()),
            "confidence": rec.confidence, "loop": has_loop(rec.text), "text": rec.text}
     if check_latex:
         f = DISPLAY_MATH.findall(rec.text)
@@ -54,8 +61,7 @@ class StoredPredictions:
 
 def score_stored(pred: Path, img: Path, truth: Path, check_latex: bool) -> dict:
     text = pred.read_text() if pred.exists() else ""
-    out = {"page": str(img), "seconds": 0.0, "ned": normalized_edit_distance(text, truth.read_text()),
-           "ned_clean": normalized_edit_distance(clean_text(text), clean_text(truth.read_text())),
+    out = {"page": str(img), "seconds": 0.0, **scores(text, truth.read_text()),
            "confidence": 1.0, "loop": has_loop(text), "text": text, "missing": not pred.exists()}
     if check_latex:
         f = DISPLAY_MATH.findall(text)
@@ -73,6 +79,7 @@ def summarize(rows: list[dict]) -> dict:
         secs = sorted(r["seconds"] for r in rs)
         out[b] = {"pages": len(rs), "ned_mean": statistics.mean(r["ned"] for r in rs),
                   "ned_clean_mean": statistics.mean(r["ned_clean"] for r in rs),
+                  "ned_compact_mean": statistics.mean(r["ned_compact"] for r in rs),
                   "sec_median": statistics.median(secs),
                   "sec_p90": secs[min(len(secs) - 1, int(0.9 * len(secs)))],
                   "loops": sum(r["loop"] for r in rs)}
@@ -96,6 +103,9 @@ def main(argv=None):
                     help="score existing <dir>/<bucket>/<page>.md outputs instead of calling a server (seconds=0)")
     ap.add_argument("--latex", action="store_true", help="also check formula compile rate")
     ap.add_argument("--out", type=Path, default=Path("results"))
+    ap.add_argument("--preds", type=Path,
+                    help="where live outputs are saved, <dir>/<bucket>/<page>.md (default preds/<name>); "
+                         "pages already there are scored from disk, so a rerun resumes")
     a = ap.parse_args(argv)
 
     prompts = dict(PADDLE_PROMPTS)
@@ -109,14 +119,27 @@ def main(argv=None):
         a.name, a.url, a.model, prompts, max_tokens=a.max_tokens, api_key=key,
         logprobs=not a.no_logprobs, extra=extra)
     stored = StoredPredictions(a.name, a.predictions) if a.predictions else None
+    saved = a.preds or Path("preds") / a.name
     rows = []
     for bucket, img, truth in pages(a.dataset):
         if stored:
             r = score_stored(stored.for_page(img, a.dataset), img, truth, a.latex)
         else:
-            r = score_page(engine, img, truth, a.latex)
+            pred = saved / img.relative_to(a.dataset).with_suffix(".md")
+            meta = pred.with_suffix(".json")
+            if pred.exists() and meta.exists():  # done in an earlier run
+                r = {**score_stored(pred, img, truth, a.latex), **json.loads(meta.read_text())}
+            else:
+                try:
+                    r = score_page(engine, img, truth, a.latex)
+                except QuotaExhausted as e:
+                    print(f"stopping: {e}; rerun later to continue ({len(rows)} pages scored)", flush=True)
+                    break
+                pred.parent.mkdir(parents=True, exist_ok=True)
+                pred.write_text(r["text"])
+                meta.write_text(json.dumps({"seconds": r["seconds"], "confidence": r["confidence"]}))
         rows.append({"bucket": bucket, **r})
-        print(f"{bucket}/{img.name}: ned={r['ned']:.3f} clean={r['ned_clean']:.3f} {r['seconds']:.1f}s", flush=True)
+        print(f"{bucket}/{img.name}: ned={r['ned']:.3f} clean={r['ned_clean']:.3f} compact={r['ned_compact']:.3f} {r['seconds']:.1f}s", flush=True)
     a.out.mkdir(parents=True, exist_ok=True)
     summary = summarize(rows)
     (a.out / f"{a.name}.json").write_text(json.dumps({"summary": summary, "pages": rows}, indent=1))
