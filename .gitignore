@@ -5,3 +5,6 @@ models/
 core/target/
 eval/results/
 eval/preds/
+datasets/
+desktop/target/
+desktop/gen/

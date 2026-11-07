@@ -57,3 +57,18 @@ def test_clean_text_ignores_formatting():
     a = "# Title\n\n```c\nint x;\n```\n\n**Step 1:** go\n\n---\n\n\\[ x^2 \\]\n\n```mermaid\nflowchart TD\nA-->B\n```"
     b = "Title int x; Step 1: go x^2"
     assert clean_text(a) == b
+
+
+def test_clean_text_same_table_any_format():
+    from makaar_eval.metrics import clean_text
+
+    html = "<table><tr><th>n</th><th>cost</th></tr><tr><td>2</td><td>$4$</td></tr></table>"
+    md = "| n | cost |\n|---|:---:|\n| 2 | \\(4\\) |"
+    otsl = "<fcel>n<fcel>cost<nl><fcel>2<fcel>4<nl>"
+    assert clean_text(html) == clean_text(md) == clean_text(otsl) == "n cost 2 4"
+
+
+def test_clean_text_strips_single_dollar_math():
+    from makaar_eval.metrics import clean_text
+
+    assert clean_text("cost $c_1$ and \\(c_2\\)") == "cost c_1 and c_2"

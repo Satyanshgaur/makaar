@@ -3,7 +3,7 @@
 # Key: create one at https://aistudio.google.com/apikey and save it, readable only by you:
 #   mkdir -p ~/.config/makaar && (umask 077; cat > ~/.config/makaar/gemini_key)   # paste, Enter, Ctrl-D
 # Free-tier inputs may be used by Google to improve its models; don't send pages you can't share.
-# Usage: scripts/gemini_baseline.sh [model] [dataset]   (model defaults to the newest stable Flash)
+# Usage: [NAME=gemini-api] scripts/gemini_baseline.sh [model] [dataset]   (model defaults to the newest stable Flash; dataset is relative to eval/)
 set -euo pipefail
 KEY=${GEMINI_KEY_FILE:-$HOME/.config/makaar/gemini_key}
 BASE=https://generativelanguage.googleapis.com/v1beta/openai
@@ -22,6 +22,6 @@ PY
 DATA=${2:-data}
 echo "model: $MODEL" >&2
 cd "$(dirname "$0")/../eval"
-uv run python -m makaar_eval.runner "$DATA" --name gemini-api --url "$BASE/chat/completions" \
+uv run python -m makaar_eval.runner "$DATA" --name "${NAME:-gemini-api}" --url "$BASE/chat/completions" \
   --model "$MODEL" --api-key-file "$KEY" --no-logprobs --reasoning-effort low --max-tokens 8192 \
   --prompt-file prompts/page_markdown.txt

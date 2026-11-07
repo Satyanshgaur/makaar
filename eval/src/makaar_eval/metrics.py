@@ -9,7 +9,15 @@ import tempfile
 from pathlib import Path
 
 
+try:  # C++ Levenshtein: long pages take milliseconds instead of seconds
+    from rapidfuzz.distance import Levenshtein as _lev
+except ImportError:  # pragma: no cover
+    _lev = None
+
+
 def edit_distance(a: Sequence, b: Sequence) -> int:
+    if _lev is not None:
+        return _lev.distance(a, b)
     if len(a) < len(b):
         a, b = b, a
     prev = list(range(len(b) + 1))
@@ -73,12 +81,18 @@ def clean_text(md: str) -> str:
     """Strip presentation so models are scored on content, not formatting.
 
     Removes Mermaid blocks (models can't be expected to draw diagrams), code-fence markers,
-    heading/bold/rule markup and LaTeX math delimiters, then lowercases nothing and collapses space.
+    heading/bold/rule markup, LaTeX math delimiters (including single `$`), and table markup
+    (HTML tags, OTSL tokens, Markdown pipes and separator rows) so a table is scored on its cell
+    text whatever format it came in. Then collapses whitespace; case is kept.
     """
     md = _MERMAID.sub(" ", md)
     md = re.sub(r"^```\w*\s*$", " ", md, flags=re.M)
     md = re.sub(r"^\s*(-{3,}|\*{3,})\s*$", " ", md, flags=re.M)
     md = re.sub(r"^#{1,6}\s*", "", md, flags=re.M)
-    md = re.sub(r"\\[()\[\]]|\$\$|\*\*|`", " ", md)
+    md = re.sub(r"</?(?:table|thead|tbody|tr|td|th|br|p|div|span)\b[^>]*>", " ", md, flags=re.I)
+    md = re.sub(r"<(?:fcel|ecel|lcel|ucel|xcel|nl|ched|rhed|srow)>", " ", md)
+    md = re.sub(r"^\s*\|?(\s*:?-{3,}:?\s*\|)+\s*:?-*:?\s*$", " ", md, flags=re.M)
+    md = md.replace("|", " ")
+    md = re.sub(r"\\[()\[\]]|\$|\*\*|`", " ", md)
     md = re.sub(r"\\(?:,|;|!|quad|qquad|text|mathrm)\b", " ", md)
     return " ".join(md.split())
