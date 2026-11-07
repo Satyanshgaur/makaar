@@ -1,6 +1,6 @@
 # makaar
 
-Open-source, offline notes-to-LaTeX/Markdown/Word converter. See `docs/research.md` for the research and build plan, and `docs/DECISIONS.md` for where we diverge from it.
+Open-source, offline notes-to-LaTeX/Markdown/Word converter. See `docs/research.md` for the research and build plan, `docs/DECISIONS.md` for where we diverge from it, and `docs/RESULTS.md` for measured accuracy and speed.
 
 Status: Phase 3. The `makaar` CLI converts page images end to end, offline: layout, per-region recognition, then Markdown, compile-checked LaTeX and Word. Gate 1 is still open: only 10 eval pages so far.
 

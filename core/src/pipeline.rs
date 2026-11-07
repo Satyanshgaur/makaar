@@ -30,6 +30,9 @@ pub struct PipelineConfig {
     pub accept: f64,
     /// General-model blocks below this mean token probability are flagged for review.
     pub flag_below: f64,
+    /// When the specialist was rejected and the general model read the block, flag it if the
+    /// two readings differ by more than this (normalized edit distance).
+    pub flag_disagree: f64,
 }
 
 impl Default for PipelineConfig {
@@ -39,12 +42,50 @@ impl Default for PipelineConfig {
             page_tokens: 4096,
             accept: ACCEPT,
             flag_below: FLAG_BELOW,
+            flag_disagree: FLAG_DISAGREE,
         }
     }
 }
 
 /// Default specialist acceptance; see DECISIONS for the calibration.
-pub const ACCEPT: f64 = 0.98;
+pub const ACCEPT: f64 = 0.99;
+
+/// On 2,068 OmniDocBench blocks read by both models, disagreement above 0.3 flags 4% of blocks
+/// with 0.48 precision; token confidence alone barely separates bad printed blocks.
+pub const FLAG_DISAGREE: f64 = 0.3;
+
+/// Edit distance over characters divided by the longer length (0 = same, 1 = nothing shared).
+pub fn disagreement(a: &str, b: &str) -> f64 {
+    let (a, b): (Vec<char>, Vec<char>) = (
+        a.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .collect(),
+        b.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .collect(),
+    );
+    let n = a.len().max(b.len());
+    if n == 0 {
+        return 0.0;
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            cur.push(
+                (prev[j + 1] + 1)
+                    .min(cur[j] + 1)
+                    .min(prev[j] + usize::from(ca != cb)),
+            );
+        }
+        prev = cur;
+    }
+    prev[b.len()] as f64 / n as f64
+}
 
 /// PaddleOCR-VL's mean token probability is 0.75–0.89 on handwritten blocks and 0.91–1.00 on
 /// printed ones in the eval set; provisional until the test set calibrates it.
@@ -165,6 +206,15 @@ pub fn recognize_page_routed(
     let found = layout.detect(img)?;
     let mut blocks = if found.regions.is_empty() || found.overlap > cfg.max_overlap {
         vec![whole_page(index, width, height)]
+    } else if found.regions.iter().all(|r| r.kind() == BlockType::Figure) {
+        // Only figures: a lone handwritten formula or derivation is often taken for a drawing,
+        // and figures aren't read. Keep the crops and read the page too, so nothing is dropped.
+        let mut b = to_blocks(index, &found.regions);
+        let mut page = whole_page(index, width, height);
+        page.id = format!("p{index}-b{}", b.len());
+        page.order = b.len() as u32;
+        b.push(page);
+        b
     } else {
         to_blocks(index, &found.regions)
     };
@@ -172,8 +222,10 @@ pub fn recognize_page_routed(
         let Some(task) = task_for(b) else { continue };
         let budget = token_budget(b.bbox, width, height, cfg.page_tokens);
         let region = crop(img, b.bbox);
+        let mut draft = None;
         if let Some(s) = specialist.as_mut().filter(|_| specialist_eligible(b)) {
             let rec = s.recognize(&region, Task::Text, budget)?;
+            draft = Some(reflow(&rec.text));
             if !rec.text.trim().is_empty() && rec.confidence() >= cfg.accept {
                 b.text = Some(reflow(&rec.text));
                 b.confidence = Some(rec.confidence());
@@ -185,7 +237,8 @@ pub fn recognize_page_routed(
         let rec = engine.recognize(&region, task, budget)?;
         b.confidence = Some(rec.confidence());
         b.engine = Some(rec.engine.clone());
-        if rec.confidence() < cfg.flag_below {
+        let disagrees = draft.is_some_and(|d| disagreement(&d, &rec.text) > cfg.flag_disagree);
+        if rec.confidence() < cfg.flag_below || disagrees {
             b.flagged = Some(true);
         }
         if rec.truncated {
@@ -299,6 +352,57 @@ mod tests {
         assert_eq!(general.0.len(), 3);
         // Echo reports probability 0.5, below FLAG_BELOW
         assert!(page.blocks.iter().all(|b| b.flagged == Some(true)));
+    }
+
+    #[test]
+    fn figures_only_page_is_also_read_whole() {
+        let img = RgbImage::new(100, 100);
+        let mut layout = FixedLayout(vec![region("image", [10., 10., 90., 60.], 1.)]);
+        let mut engine = Echo(vec![], None);
+        let page = recognize_page(
+            &img,
+            0,
+            &mut layout,
+            &mut engine,
+            &PipelineConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(page.blocks.len(), 2);
+        assert_eq!(page.blocks[0].kind, BlockType::Figure);
+        assert_eq!(page.blocks[1].label.as_deref(), Some("page"));
+        assert_eq!(page.blocks[1].id, "p0-b1");
+        assert_eq!(engine.0.len(), 1); // only the page is read
+    }
+
+    #[test]
+    fn disagreement_flags_rejected_blocks() {
+        assert_eq!(disagreement("a  b", "a b"), 0.0);
+        assert!((disagreement("abcd", "abxy") - 0.5).abs() < 1e-9);
+        let img = RgbImage::new(100, 100);
+        let regions = vec![region("text", [0., 0., 50., 10.], 1.)];
+        let mut general = Fixed("the general reading", 0.99);
+        let mut unsure_but_close = Fixed("the general readinq", 0.6);
+        let page = recognize_page_routed(
+            &img,
+            0,
+            &mut FixedLayout(regions.clone()),
+            Some(&mut unsure_but_close),
+            &mut general,
+            &PipelineConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(page.blocks[0].flagged, None);
+        let mut unsure_and_different = Fixed("something else entirely", 0.6);
+        let page = recognize_page_routed(
+            &img,
+            0,
+            &mut FixedLayout(regions),
+            Some(&mut unsure_and_different),
+            &mut general,
+            &PipelineConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(page.blocks[0].flagged, Some(true));
     }
 
     #[test]
