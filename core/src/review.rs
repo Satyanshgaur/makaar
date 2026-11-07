@@ -64,26 +64,53 @@ fn token() -> String {
     out
 }
 
+/// A loopback server on `port` (0: any free one) and its page URL with a fresh session token.
+fn bind(port: u16) -> std::io::Result<(Server, u16, String)> {
+    let server = Server::http(("127.0.0.1", port)).map_err(std::io::Error::other)?;
+    let port = server.server_addr().to_ip().map_or(port, |a| a.port());
+    Ok((
+        server,
+        port,
+        format!("http://127.0.0.1:{port}/?t={}", token()),
+    ))
+}
+
 pub struct Review {
     pub doc: Document,
     pub json_path: PathBuf,
 }
 
 type Saver<'a> = dyn FnMut(&mut Document) -> Result<String, String> + 'a;
+/// A save callback that can move to the server thread.
+pub type SendSaver = Box<dyn FnMut(&mut Document) -> Result<String, String> + Send>;
 
 impl Review {
-    /// Serves until the process is stopped. `on_save` re-exports and returns a status line.
-    pub fn serve(mut self, port: u16, on_save: &mut Saver) -> std::io::Result<()> {
-        let server = Server::http(("127.0.0.1", port)).map_err(std::io::Error::other)?;
-        let port = server.server_addr().to_ip().map_or(port, |a| a.port());
-        let token = token();
-        let url = format!("http://127.0.0.1:{port}/?t={token}");
+    /// Serves until the process is stopped, opening the browser. `on_save` re-exports and
+    /// returns a status line.
+    pub fn serve(self, port: u16, on_save: &mut Saver) -> std::io::Result<()> {
+        let (server, port, url) = bind(port)?;
         eprintln!("review at {url}  (Ctrl-C to stop)");
         open_browser(&url);
+        self.run(server, port, &url, on_save);
+        Ok(())
+    }
+
+    /// Serves on a background thread (the desktop app) and returns the page URL at once.
+    pub fn spawn(self, on_save: SendSaver) -> std::io::Result<String> {
+        let (server, port, url) = bind(0)?;
+        let page = url.clone();
+        std::thread::spawn(move || {
+            let mut on_save = on_save;
+            self.run(server, port, &page, on_save.as_mut());
+        });
+        Ok(url)
+    }
+
+    fn run(mut self, server: Server, port: u16, url: &str, on_save: &mut Saver) {
+        let token = url.rsplit_once("t=").map_or("", |(_, t)| t).to_string();
         for req in server.incoming_requests() {
             let _ = self.handle(req, port, &token, on_save);
         }
-        Ok(())
     }
 
     /// The document and every block's preview, inlined into the page so it renders at once
