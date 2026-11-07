@@ -15,9 +15,14 @@ core/target/release/makaar review out/notes.json      # fix flagged blocks in th
 
 `setup` installs llama.cpp's official CPU build for your platform (`--backend vulkan` uses most laptop GPUs); an existing `llama-server` on PATH or `$MAKAAR_LLAMA_SERVER` also works. `tectonic` is optional and enables the LaTeX compile check. Use `--gpu-layers 0` for CPU only. Rerun the same command to resume an interrupted job.
 
+## Desktop app
+
+`desktop/` is a Tauri window over the same core: pick pages (images or PDFs), convert, review. Build installers with `cd desktop && cargo tauri build` (Linux needs `webkit2gtk4.1-devel`), or take them from the release workflow.
+
 ## Layout
 - `schema/document.schema.json` – the job document (pages → blocks), single source of truth for review UI and exports
 - `eval/` – evaluation harness (metrics, engine adapters, runner)
+- `desktop/` – Tauri desktop app (home screen + review window)
 - `core/` – Rust core and the `makaar` CLI: document model, resumable queue, ingest, layout (PP-DocLayoutV3 on ONNX Runtime), recognition via a llama-server sidecar, exports, model download
 
 ## Dev

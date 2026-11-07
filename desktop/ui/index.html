@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>makaar</title>
+<style>
+  :root { --accent: #1565c0; --bad: #c62828; --ok: #2e7d32; --muted: #666; --line: #ddd; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; color: #222; background: #fafafa; }
+  main { max-width: 680px; margin: 0 auto; padding: 22px 24px; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 18px; }
+  section { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; margin-bottom: 14px; }
+  h2 { font-size: 14px; margin: 0 0 8px; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid #bbb; background: #fff; border-radius: 4px; cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); font-size: 13px; }
+  ul { margin: 6px 0 0; padding-left: 18px; max-height: 110px; overflow: auto; font-size: 13px; }
+  code { font-size: 12px; word-break: break-all; }
+  progress { width: 100%; height: 14px; }
+  #log { font: 12px/1.4 ui-monospace, monospace; max-height: 140px; overflow: auto; background: #f4f4f4; padding: 6px 8px; border-radius: 4px; margin-top: 8px; white-space: pre-wrap; }
+  .bad { color: var(--bad); } .ok { color: var(--ok); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>makaar</h1>
+  <p class="sub">Notes and scans to Markdown, LaTeX and Word, on this computer. Nothing is uploaded.</p>
+
+  <section id="setup" class="hidden">
+    <h2>First-run setup</h2>
+    <p class="muted" id="setupText"></p>
+    <button class="primary" id="setupBtn">Download models</button>
+    <progress id="setupBar" class="hidden" max="1" value="0"></progress>
+    <div class="muted" id="setupItem"></div>
+  </section>
+
+  <section>
+    <h2>1. Pages</h2>
+    <div class="row">
+      <button id="files">Choose images or PDFs…</button>
+      <button id="folder">Choose a folder…</button>
+      <span class="muted" id="count">nothing chosen</span>
+    </div>
+    <ul id="inputs"></ul>
+  </section>
+
+  <section>
+    <h2>2. Output</h2>
+    <div class="row"><code id="out">—</code><button id="outBtn">Change…</button></div>
+    <div class="row" style="margin-top:8px">
+      <label><input type="checkbox" class="fmt" value="md" checked> Markdown</label>
+      <label><input type="checkbox" class="fmt" value="tex" checked> LaTeX (+PDF)</label>
+      <label><input type="checkbox" class="fmt" value="docx" checked> Word</label>
+      <label title="Use the graphics card if llama.cpp can"><input type="checkbox" id="gpu" checked> Use GPU</label>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. Convert</h2>
+    <div class="row">
+      <button class="primary" id="go" disabled>Convert</button>
+      <span id="state" class="muted"></span>
+    </div>
+    <progress id="bar" class="hidden" max="1" value="0"></progress>
+    <div id="log" class="hidden"></div>
+    <div class="row hidden" id="doneRow" style="margin-top:10px">
+      <button class="primary" id="review">Review flagged blocks</button>
+      <button id="openOut">Open output folder</button>
+    </div>
+  </section>
+</main>
+<script>
+const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+const $ = (id) => document.getElementById(id);
+let inputs = [], out = null, json = null, ready = false;
+
+function log(line, cls) {
+  const el = $("log"); el.classList.remove("hidden");
+  const d = document.createElement("div"); d.textContent = line; if (cls) d.className = cls;
+  el.appendChild(d); el.scrollTop = el.scrollHeight;
+}
+function refresh() {
+  $("count").textContent = inputs.length ? `${inputs.length} chosen` : "nothing chosen";
+  $("inputs").innerHTML = ""; for (const p of inputs) { const li = document.createElement("li"); li.textContent = p; $("inputs").appendChild(li); }
+  $("out").textContent = out || "—";
+  $("go").disabled = !(ready && inputs.length && out);
+}
+async function checkStatus() {
+  const s = await invoke("status");
+  ready = s.missing.length === 0 && !!s.llama_server;
+  $("setup").classList.toggle("hidden", ready);
+  $("setupText").textContent = `makaar needs its reading models (${s.download_mb} MB, downloaded once into ${s.models_dir} and checked).`;
+  refresh();
+}
+async function choose(folder) {
+  const picked = await invoke("pick_inputs", { folder });
+  if (!picked.length) return;
+  inputs = picked;
+  out = await invoke("default_output", { inputs });
+  refresh();
+}
+$("files").onclick = () => choose(false);
+$("folder").onclick = () => choose(true);
+$("outBtn").onclick = async () => { const o = await invoke("pick_output"); if (o) { out = o; refresh(); } };
+
+$("setupBtn").onclick = async () => {
+  $("setupBtn").disabled = true; $("setupBar").classList.remove("hidden");
+  try { await invoke("setup"); $("setupItem").textContent = "done"; } catch (e) { $("setupItem").textContent = "failed: " + e; $("setupItem").className = "bad"; }
+  $("setupBtn").disabled = false; checkStatus();
+};
+listen("setup", (e) => {
+  const p = e.payload; $("setupBar").max = p.total; $("setupBar").value = p.done;
+  $("setupItem").textContent = `${p.item}: ${p.done >> 20} / ${p.total >> 20} MB`;
+});
+
+$("go").onclick = async () => {
+  const formats = [...document.querySelectorAll(".fmt:checked")].map((c) => c.value);
+  $("go").disabled = true; $("doneRow").classList.add("hidden"); $("log").innerHTML = "";
+  $("bar").classList.remove("hidden"); $("bar").value = 0; $("state").textContent = "starting…";
+  try {
+    json = await invoke("convert", { inputs, out, formats, gpu: $("gpu").checked });
+    $("doneRow").classList.remove("hidden");
+  } catch (e) { $("state").textContent = "failed"; log(String(e), "bad"); }
+  refresh();
+};
+listen("progress", (e) => {
+  const p = e.payload;
+  if (p.kind === "status") log(p.message);
+  if (p.kind === "page") {
+    $("bar").max = p.total; $("bar").value = p.done;
+    $("state").textContent = `page ${p.done} of ${p.total}`;
+    log(`${p.done}/${p.total}  ${p.path.split(/[\\/]/).pop()}: ${p.blocks} blocks, ${p.flagged} flagged, ${p.seconds.toFixed(1)}s`);
+  }
+  if (p.kind === "page_failed") log(`${p.done}/${p.total}  ${p.path}: failed: ${p.error}`, "bad");
+  if (p.kind === "finished") {
+    $("bar").max = 1; $("bar").value = 1;
+    $("state").innerHTML = `<span class="ok">done</span>: ${p.pages} page(s), ${p.flagged} block(s) to review`;
+    if (p.failed.length) log(`${p.failed.length} page(s) failed; convert again to retry them`, "bad");
+  }
+});
+$("review").onclick = () => invoke("open_review", { json }).catch((e) => log(String(e), "bad"));
+$("openOut").onclick = () => invoke("open_path", { path: out });
+(async () => {
+  const given = await invoke("launch_inputs");
+  if (given.length) { inputs = given; out = await invoke("default_output", { inputs }); }
+  checkStatus();
+})();
+</script>
+</body>
+</html>
