@@ -26,7 +26,8 @@ jobs:
         shell: bash
         run: |
           core/target/release/${{ matrix.exe }} --version
-          core/target/release/${{ matrix.exe }} models --dir "$RUNNER_TEMP/none" | grep -q missing
+          out=$(core/target/release/${{ matrix.exe }} models --dir "$RUNNER_TEMP/none")
+          echo "$out" | grep -q missing
       - name: Package
         shell: bash
         run: |
@@ -53,7 +54,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-22.04, bundles: "deb,appimage" }
+          # ONNX Runtime's prebuilt static library needs glibc 2.38+, so not 22.04
+          - { os: ubuntu-24.04, bundles: "deb,appimage" }
           - { os: macos-latest, bundles: "dmg" }
           - { os: windows-latest, bundles: "nsis" }
     runs-on: ${{ matrix.os }}
