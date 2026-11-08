@@ -25,6 +25,8 @@ GPU time per page, median: 5.7 s routed, 12.1 s with PaddleOCR-VL alone. Routing
 | CROHME 2019 (math expressions) | 0.306 compact, 24% exact | 0.163 |
 | MathWriting (math expressions) | 0.217 on the 68 Flash-Lite finished | 0.202 |
 
+These rows predate DECISIONS 48–49 (formula re-read, box growing). On a fresh held-out sample (seed 8; 132 / 140 / 145 items, compact NED) those two changes moved CROHME 0.321 → 0.190, IAM 0.051 → 0.054 and MathWriting 0.252 → 0.247. Printed pages: 0.1216 → 0.1229 clean NED on the 140 OmniDocBench pages with current routing (0.99), median 6.6 s/page on GPU.
+
 \*Flash-Lite is not the gate model. Gemini Flash's free tier allows 20 requests a day, so the gate comparison runs on a fixed 60-item sample over three days (`scripts/gemini_daily.sh`). Flash-Lite has a separate quota and is shown only as context.
 
 ## Speed (gate 2), CPU only, 6 threads

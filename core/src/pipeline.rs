@@ -33,6 +33,10 @@ pub struct PipelineConfig {
     /// When the specialist was rejected and the general model read the block, flag it if the
     /// two readings differ by more than this (normalized edit distance).
     pub flag_disagree: f64,
+    /// Re-read short text-prompt readings with the formula prompt (see `FORMULA_MAX_WORDS`).
+    pub formula_retry: bool,
+    /// Widen text and formula boxes along their line to take in ink next to them (see `grow_to_ink`).
+    pub grow_to_ink: bool,
 }
 
 impl Default for PipelineConfig {
@@ -43,6 +47,8 @@ impl Default for PipelineConfig {
             accept: ACCEPT,
             flag_below: FLAG_BELOW,
             flag_disagree: FLAG_DISAGREE,
+            formula_retry: true,
+            grow_to_ink: true,
         }
     }
 }
@@ -117,6 +123,43 @@ pub fn reflow(text: &str) -> String {
     out
 }
 
+/// Words of three or more letters, the test for "this reading is not prose".
+fn words(text: &str) -> usize {
+    text.split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| w.len() >= 3)
+        .count()
+}
+
+/// A formula reading that is really prose: a word of three or more letters set in `\mathrm`,
+/// `\text` and the like (the formula prompt turns printed `Culture` into `\mathrm{C u l t u r e}`),
+/// or CJK text.
+fn wordy_formula(f: &str) -> bool {
+    const WRAPPERS: [&str; 6] = [
+        "\\mathrm{",
+        "\\text{",
+        "\\texttt{",
+        "\\textbf{",
+        "\\mathbf{",
+        "\\operatorname{",
+    ];
+    let cjk = f.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
+    cjk || WRAPPERS.iter().any(|w| {
+        f.match_indices(w).any(|(i, _)| {
+            let inner = f[i + w.len()..].split('}').next().unwrap_or("");
+            inner.chars().filter(char::is_ascii_alphabetic).count() >= 3
+        })
+    })
+}
+
+/// A text-prompt reading with at most this many words is re-read as a formula. The layout model
+/// often calls a lone handwritten expression a title or a paragraph, and the text prompt then
+/// returns `## 39` for `3 9`, or CJK look-alikes (`工工` for `I I`).
+pub const FORMULA_MAX_WORDS: usize = 2;
+/// The formula reading wins unless its confidence is this much below the text reading's. On 450
+/// handwritten crops (CROHME, MathWriting, IAM lines) this takes compact NED from 0.306 to 0.201
+/// on CROHME and 0.247 to 0.179 on MathWriting, with IAM unchanged (0.061 → 0.058).
+pub const FORMULA_MARGIN: f64 = 0.05;
+
 /// Pixels added around each crop so strokes on the box edge are not cut.
 const PAD: f64 = 4.0;
 const MIN_TOKENS: u32 = 128;
@@ -164,6 +207,88 @@ pub fn trim_loop(text: &str) -> Option<String> {
             .trim_end()
             .to_string()
     })
+}
+
+/// Ink: pixels well below the page's median brightness (grey paper and photos included).
+fn ink_mask(img: &RgbImage) -> Vec<bool> {
+    let luma: Vec<u8> = img
+        .pixels()
+        .map(|p| {
+            ((u32::from(p[0]) * 299 + u32::from(p[1]) * 587 + u32::from(p[2]) * 114) / 1000) as u8
+        })
+        .collect();
+    let mut hist = [0usize; 256];
+    for &l in &luma {
+        hist[usize::from(l)] += 1;
+    }
+    let (mut seen, mut median) = (0, 255u8);
+    for (v, &n) in hist.iter().enumerate() {
+        seen += n;
+        if seen * 2 >= luma.len() {
+            median = v as u8;
+            break;
+        }
+    }
+    let threshold = median.saturating_sub(40).min(128);
+    luma.into_iter().map(|l| l < threshold).collect()
+}
+
+/// The layout model often boxes only part of a handwritten line (`=0` of `N[u(x)]=0`), and the
+/// rest is never read. Widen each text and formula box left and right along its own rows while
+/// there is ink within a gap of about half the box height, stopping at other boxes on that line.
+fn grow_to_ink(img: &RgbImage, blocks: &mut [Block]) {
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let ink = ink_mask(img);
+    let boxes: Vec<[f64; 4]> = blocks.iter().map(|b| b.bbox).collect();
+    for (i, b) in blocks.iter_mut().enumerate() {
+        if !matches!(
+            b.kind,
+            BlockType::Text | BlockType::Heading | BlockType::Formula
+        ) {
+            continue;
+        }
+        let [x0, y0, x1, y1] = b.bbox;
+        let (r0, r1) = ((y0.max(0.0) as usize).min(h), (y1.max(0.0) as usize).min(h));
+        if r1 <= r0 {
+            continue;
+        }
+        let max_gap = ((y1 - y0) * 0.6).max(8.0) as usize;
+        let inked = |x: usize| (r0..r1).filter(|&y| ink[y * w + x]).count() >= 2;
+        // columns covered by another box that shares these rows
+        let blocked = |x: usize| {
+            let x = x as f64;
+            boxes
+                .iter()
+                .enumerate()
+                .any(|(j, o)| j != i && o[0] <= x && x <= o[2] && o[1] < y1 && y0 < o[3])
+        };
+        let walk = |cols: &mut dyn Iterator<Item = usize>| {
+            let (mut last, mut gap) = (None, 0);
+            for x in cols {
+                if blocked(x) {
+                    break;
+                }
+                if inked(x) {
+                    last = Some(x);
+                    gap = 0;
+                } else {
+                    gap += 1;
+                    if gap > max_gap {
+                        break;
+                    }
+                }
+            }
+            last
+        };
+        let left = (x0.max(0.0) as usize).min(w);
+        let right = (x1.max(0.0).ceil() as usize).min(w);
+        if let Some(x) = walk(&mut (0..left).rev()) {
+            b.bbox[0] = x as f64;
+        }
+        if let Some(x) = walk(&mut (right..w)) {
+            b.bbox[2] = (x + 1) as f64;
+        }
+    }
 }
 
 fn whole_page(index: u32, width: u32, height: u32) -> Block {
@@ -216,7 +341,11 @@ pub fn recognize_page_routed(
         b.push(page);
         b
     } else {
-        to_blocks(index, &found.regions)
+        let mut b = to_blocks(index, &found.regions);
+        if cfg.grow_to_ink {
+            grow_to_ink(img, &mut b);
+        }
+        b
     };
     for b in &mut blocks {
         let Some(task) = task_for(b) else { continue };
@@ -234,7 +363,23 @@ pub fn recognize_page_routed(
                 continue;
             }
         }
-        let rec = engine.recognize(&region, task, budget)?;
+        let mut rec = engine.recognize(&region, task, budget)?;
+        if cfg.formula_retry
+            && task == Task::Text
+            && b.label.as_deref() != Some("algorithm")
+            && !rec.truncated
+            && words(&rec.text) <= FORMULA_MAX_WORDS
+        {
+            let f = engine.recognize(&region, Task::Formula, budget)?;
+            if !f.text.trim().is_empty()
+                && !f.truncated
+                && !wordy_formula(&f.text)
+                && f.confidence() >= rec.confidence() - FORMULA_MARGIN
+            {
+                b.kind = BlockType::Formula;
+                rec = f;
+            }
+        }
         b.confidence = Some(rec.confidence());
         b.engine = Some(rec.engine.clone());
         let disagrees = draft.is_some_and(|d| disagreement(&d, &rec.text) > cfg.flag_disagree);
@@ -288,7 +433,7 @@ mod tests {
         ) -> Result<Recognition, EngineError> {
             self.0.push((crop.width(), task, max_tokens));
             Ok(Recognition {
-                text: self.1.clone().unwrap_or(format!("{task:?}")),
+                text: self.1.clone().unwrap_or(format!("{task:?} read as prose")),
                 token_probs: vec![0.5],
                 engine: "echo".into(),
                 truncated: self.1.is_some(),
@@ -348,7 +493,7 @@ mod tests {
             &cfg,
         )
         .unwrap();
-        assert_eq!(page.blocks[0].text.as_deref(), Some("Text"));
+        assert_eq!(page.blocks[0].text.as_deref(), Some("Text read as prose"));
         assert_eq!(general.0.len(), 3);
         // Echo reports probability 0.5, below FLAG_BELOW
         assert!(page.blocks.iter().all(|b| b.flagged == Some(true)));
@@ -372,6 +517,83 @@ mod tests {
         assert_eq!(page.blocks[1].label.as_deref(), Some("page"));
         assert_eq!(page.blocks[1].id, "p0-b1");
         assert_eq!(engine.0.len(), 1); // only the page is read
+    }
+
+    /// Reads `## 39` with the text prompt and `\[3 9\]` with the formula prompt.
+    struct ByTask(f64, f64);
+    impl Engine for ByTask {
+        fn name(&self) -> &str {
+            "by-task"
+        }
+        fn recognize(
+            &mut self,
+            _: &RgbImage,
+            task: Task,
+            _: u32,
+        ) -> Result<Recognition, EngineError> {
+            let (text, p) = match task {
+                Task::Formula => ("\\[3 9\\]", self.1),
+                _ => ("## 39", self.0),
+            };
+            Ok(Recognition {
+                text: text.into(),
+                token_probs: vec![p],
+                engine: "by-task".into(),
+                truncated: false,
+            })
+        }
+    }
+
+    #[test]
+    fn short_text_readings_are_retried_as_formulas() {
+        let img = RgbImage::new(100, 100);
+        let read = |text_p, formula_p| {
+            let regions = vec![region("paragraph_title", [0., 0., 50., 10.], 1.)];
+            recognize_page(
+                &img,
+                0,
+                &mut FixedLayout(regions),
+                &mut ByTask(text_p, formula_p),
+                &PipelineConfig::default(),
+            )
+            .unwrap()
+            .blocks
+            .remove(0)
+        };
+        let b = read(0.8, 0.78);
+        assert_eq!(b.kind, BlockType::Formula);
+        assert_eq!(b.text.as_deref(), Some("\\[3 9\\]"));
+        assert!(wordy_formula("\\[\\mathrm{C u l t u r e}\\]"));
+        assert!(wordy_formula("\\text{then } x"));
+        assert!(!wordy_formula("\\int \\mathrm{d} A + \\sin x"));
+        let b = read(0.95, 0.85); // formula reading much less sure: keep the text
+        assert_ne!(b.kind, BlockType::Formula);
+        assert_eq!(b.text.as_deref(), Some("## 39"));
+    }
+
+    #[test]
+    fn boxes_grow_to_adjacent_ink_on_their_line() {
+        // white page; ink at x 10..30 and 40..60 on rows 20..40, and far away at x 150..160
+        let mut img = RgbImage::from_pixel(200, 60, image::Rgb([250, 250, 250]));
+        for y in 20..40 {
+            for x in (10..30).chain(40..60).chain(150..160) {
+                img.put_pixel(x, y, image::Rgb([20, 20, 20]));
+            }
+        }
+        let mut blocks = to_blocks(0, &[region("text", [40., 18., 60., 42.], 1.)]);
+        grow_to_ink(&img, &mut blocks);
+        assert_eq!(blocks[0].bbox, [10.0, 18.0, 60.0, 42.0]); // took in 10..30, not 150..160
+
+        // a neighbouring box on the same line stops the growth
+        let mut blocks = to_blocks(
+            0,
+            &[
+                region("text", [40., 18., 60., 42.], 1.),
+                region("text", [25., 18., 32., 42.], 2.),
+            ],
+        );
+        grow_to_ink(&img, &mut blocks);
+        assert_eq!(blocks[0].bbox[0], 40.0);
     }
 
     #[test]
