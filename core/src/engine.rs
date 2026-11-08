@@ -54,6 +54,16 @@ pub trait Engine {
         task: Task,
         max_tokens: u32,
     ) -> Result<Recognition, EngineError>;
+
+    /// The same reading with the handwriting adapter switched on, if this engine has one.
+    fn recognize_with_adapter(
+        &mut self,
+        _crop: &RgbImage,
+        _task: Task,
+        _max_tokens: u32,
+    ) -> Option<Result<Recognition, EngineError>> {
+        None
+    }
 }
 
 /// PaddleOCR-VL task prompts.
@@ -72,6 +82,9 @@ pub struct OpenAiEngine {
     url: String,
     agent: ureq::Agent,
     prompt: fn(Task) -> &'static str,
+    /// The server has a LoRA adapter loaded (id 0) but not applied by default
+    /// (`--lora-init-without-apply`); `recognize_with_adapter` switches it on per request.
+    pub has_adapter: bool,
 }
 
 impl OpenAiEngine {
@@ -85,7 +98,34 @@ impl OpenAiEngine {
             url: format!("{}/v1/chat/completions", base_url.trim_end_matches('/')),
             agent,
             prompt: paddle_prompt,
+            has_adapter: false,
         }
+    }
+
+    fn read(&mut self, crop: &RgbImage, task: Task, max_tokens: u32, adapter: bool) -> Result<Recognition, EngineError> {
+        let mut png = Vec::new();
+        crop.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        let mut body = json!({
+            "model": "default",
+            "temperature": 0,  // greedy: the faithfulness gate forbids sampling
+            "max_tokens": max_tokens,
+            "logprobs": true,
+            "stream": true,
+            "messages": [{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{b64}")}},
+                {"type": "text", "text": (self.prompt)(task)},
+            ]}],
+        });
+        if self.has_adapter {
+            body["lora"] = json!([{"id": 0, "scale": if adapter { 1.0 } else { 0.0 }}]);
+        }
+        let resp = self.agent.post(&self.url).send_json(&body)?;
+        // Streamed so a looping model is cut off early: on CPU, a loop that runs to the token
+        // budget costs minutes. Dropping the reader closes the connection, and llama-server
+        // cancels the request.
+        let reader = std::io::BufReader::new(resp.into_body().into_reader());
+        parse_stream(reader, &self.name)
     }
 }
 
@@ -100,26 +140,21 @@ impl Engine for OpenAiEngine {
         task: Task,
         max_tokens: u32,
     ) -> Result<Recognition, EngineError> {
-        let mut png = Vec::new();
-        crop.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)?;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
-        let body = json!({
-            "model": "default",
-            "temperature": 0,  // greedy: the faithfulness gate forbids sampling
-            "max_tokens": max_tokens,
-            "logprobs": true,
-            "stream": true,
-            "messages": [{"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{b64}")}},
-                {"type": "text", "text": (self.prompt)(task)},
-            ]}],
-        });
-        let resp = self.agent.post(&self.url).send_json(&body)?;
-        // Streamed so a looping model is cut off early: on CPU, a loop that runs to the token
-        // budget costs minutes. Dropping the reader closes the connection, and llama-server
-        // cancels the request.
-        let reader = std::io::BufReader::new(resp.into_body().into_reader());
-        parse_stream(reader, &self.name)
+        self.read(crop, task, max_tokens, false)
+    }
+
+    fn recognize_with_adapter(
+        &mut self,
+        crop: &RgbImage,
+        task: Task,
+        max_tokens: u32,
+    ) -> Option<Result<Recognition, EngineError>> {
+        self.has_adapter.then(|| {
+            self.read(crop, task, max_tokens, true).map(|mut r| {
+                r.engine = format!("{}+handwriting-lora", r.engine);
+                r
+            })
+        })
     }
 }
 

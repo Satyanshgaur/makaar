@@ -21,6 +21,8 @@ pub enum SidecarError {
 pub struct SidecarConfig {
     pub model: PathBuf,
     pub mmproj: PathBuf,
+    /// A LoRA adapter (`--lora`), e.g. the handwriting adapter. Loaded but not applied by default.
+    pub lora: Option<PathBuf>,
     pub threads: usize,
     /// Layers on the GPU: `Some(0)` forces CPU; `None` leaves llama-server's default.
     pub gpu_layers: Option<u32>,
@@ -95,6 +97,10 @@ impl LlamaServer {
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log);
+        if let Some(l) = &cfg.lora {
+            // loaded but off: the pipeline switches it on per request for uncertain blocks
+            cmd.arg("--lora").arg(l).arg("--lora-init-without-apply");
+        }
         if let Some(n) = cfg.gpu_layers {
             cmd.args(["-ngl", &n.to_string()]);
             if n == 0 {
@@ -176,15 +182,31 @@ impl crate::engine::Engine for LazyServer {
         task: crate::engine::Task,
         max_tokens: u32,
     ) -> Result<crate::engine::Recognition, crate::engine::EngineError> {
+        self.engine()?.recognize(crop, task, max_tokens)
+    }
+
+    fn recognize_with_adapter(
+        &mut self,
+        crop: &image::RgbImage,
+        task: crate::engine::Task,
+        max_tokens: u32,
+    ) -> Option<Result<crate::engine::Recognition, crate::engine::EngineError>> {
+        self.cfg.lora.as_ref()?;
+        Some(self.engine().and_then(|e| e.recognize_with_adapter(crop, task, max_tokens).expect("adapter loaded")))
+    }
+}
+
+impl LazyServer {
+    fn engine(&mut self) -> Result<&mut crate::engine::OpenAiEngine, crate::engine::EngineError> {
         if self.running.is_none() {
             let t = Instant::now();
             let server = LlamaServer::start(&self.bin, &self.cfg)
                 .map_err(|e| crate::engine::EngineError::Response(e.to_string()))?;
             eprintln!("general model ready in {:.0}s", t.elapsed().as_secs_f64());
-            let engine = crate::engine::OpenAiEngine::new(&self.name, &server.url);
+            let mut engine = crate::engine::OpenAiEngine::new(&self.name, &server.url);
+            engine.has_adapter = self.cfg.lora.is_some();
             self.running = Some((server, engine));
         }
-        let (_, engine) = self.running.as_mut().expect("started above");
-        engine.recognize(crop, task, max_tokens)
+        Ok(&mut self.running.as_mut().expect("started above").1)
     }
 }

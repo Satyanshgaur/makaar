@@ -35,6 +35,8 @@ pub struct PipelineConfig {
     pub flag_disagree: f64,
     /// Re-read short text-prompt readings with the formula prompt (see `FORMULA_MAX_WORDS`).
     pub formula_retry: bool,
+    /// Base readings below this confidence are re-read with the handwriting adapter, if loaded.
+    pub adapter_below: f64,
     /// Widen text and formula boxes along their line to take in ink next to them (see `grow_to_ink`).
     pub grow_to_ink: bool,
 }
@@ -49,6 +51,7 @@ impl Default for PipelineConfig {
             flag_disagree: FLAG_DISAGREE,
             formula_retry: true,
             grow_to_ink: true,
+            adapter_below: ADAPTER_BELOW,
         }
     }
 }
@@ -159,6 +162,18 @@ pub const FORMULA_MAX_WORDS: usize = 2;
 /// handwritten crops (CROHME, MathWriting, IAM lines) this takes compact NED from 0.306 to 0.201
 /// on CROHME and 0.247 to 0.179 on MathWriting, with IAM unchanged (0.061 → 0.058).
 pub const FORMULA_MARGIN: f64 = 0.05;
+
+/// Handwritten blocks score 0.75–0.89 and printed ones 0.91–1.00 (DECISIONS 37); below 0.93 the
+/// adapter reads 3.6% of printed general-model blocks and most handwriting.
+pub const ADAPTER_BELOW: f64 = 0.93;
+
+/// An adapter reading replaces the base one only if it finished, isn't much shorter (the run-1
+/// adapter, trained on single lines, tended to stop after one line of a printed paragraph) and
+/// has no CJK.
+fn adapter_reading_ok(base: &str, a: &crate::engine::Recognition) -> bool {
+    let cjk = a.text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
+    !a.truncated && !a.text.trim().is_empty() && !cjk && a.text.chars().count() * 10 >= base.chars().count() * 7
+}
 
 /// Pixels added around each crop so strokes on the box edge are not cut.
 const PAD: f64 = 4.0;
@@ -380,10 +395,22 @@ pub fn recognize_page_routed(
                 rec = f;
             }
         }
+        // Uncertain readings (handwriting, mostly) are read again with the handwriting adapter.
+        // Review flags keep using the base model's confidence, so a confident adapter can't
+        // hide an uncertain block.
+        let base_confidence = rec.confidence();
+        if base_confidence < cfg.adapter_below && !rec.truncated {
+            let used = if b.kind == BlockType::Formula { Task::Formula } else { task };
+            match engine.recognize_with_adapter(&region, used, budget) {
+                Some(Ok(a)) if adapter_reading_ok(&rec.text, &a) => rec = a,
+                Some(Err(e)) => return Err(e.into()),
+                _ => {}
+            }
+        }
         b.confidence = Some(rec.confidence());
         b.engine = Some(rec.engine.clone());
         let disagrees = draft.is_some_and(|d| disagreement(&d, &rec.text) > cfg.flag_disagree);
-        if rec.confidence() < cfg.flag_below || disagrees {
+        if base_confidence < cfg.flag_below || disagrees {
             b.flagged = Some(true);
         }
         if rec.truncated {
@@ -594,6 +621,59 @@ mod tests {
         );
         grow_to_ink(&img, &mut blocks);
         assert_eq!(blocks[0].bbox[0], 40.0);
+    }
+
+    /// Base reading at confidence `.0`; the adapter returns `.1` at 0.99.
+    struct WithAdapter(f64, &'static str);
+    impl Engine for WithAdapter {
+        fn name(&self) -> &str {
+            "base"
+        }
+        fn recognize(&mut self, _: &RgbImage, _: Task, _: u32) -> Result<Recognition, EngineError> {
+            Ok(Recognition {
+                text: "the base reading of a line".into(),
+                token_probs: vec![self.0],
+                engine: "base".into(),
+                truncated: false,
+            })
+        }
+        fn recognize_with_adapter(
+            &mut self,
+            _: &RgbImage,
+            _: Task,
+            _: u32,
+        ) -> Option<Result<Recognition, EngineError>> {
+            Some(Ok(Recognition {
+                text: self.1.into(),
+                token_probs: vec![0.99],
+                engine: "base+handwriting-lora".into(),
+                truncated: false,
+            }))
+        }
+    }
+
+    #[test]
+    fn adapter_reads_only_uncertain_blocks() {
+        let img = RgbImage::new(100, 100);
+        let read = |p, adapter_text| {
+            recognize_page(
+                &img,
+                0,
+                &mut FixedLayout(vec![region("text", [0., 0., 50., 10.], 1.)]),
+                &mut WithAdapter(p, adapter_text),
+                &PipelineConfig::default(),
+            )
+            .unwrap()
+            .blocks
+            .remove(0)
+        };
+        let b = read(0.8, "the adapter reading of a line");
+        assert_eq!(b.text.as_deref(), Some("the adapter reading of a line"));
+        assert_eq!(b.flagged, Some(true)); // flagged by the base confidence, not the adapter's
+        let b = read(0.97, "the adapter reading of a line");
+        assert_eq!(b.text.as_deref(), Some("the base reading of a line"));
+        let b = read(0.8, "the adapter"); // stopped early: keep the base reading
+        assert_eq!(b.text.as_deref(), Some("the base reading of a line"));
     }
 
     #[test]

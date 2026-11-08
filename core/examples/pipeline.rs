@@ -1,7 +1,7 @@
 //! Layout + per-region recognition over an eval dataset (`<root>/<bucket>/<page>.png`). Writes
 //! `<out>/<bucket>/<page>.md` (score with `runner --predictions`), the page JSON beside it, and
 //! per-page seconds to `<out>/timings.json`. Routes like `makaar convert` (PP-OCR specialist first)
-//! unless MAKAAR_NO_SPECIALIST is set; MAKAAR_NO_FORMULA_RETRY turns off re-reading short blocks as formulas, MAKAAR_NO_GROW widening boxes to adjacent ink.
+//! unless MAKAAR_NO_SPECIALIST is set; MAKAAR_NO_FORMULA_RETRY turns off re-reading short blocks as formulas, MAKAAR_NO_GROW widening boxes to adjacent ink; MAKAAR_ADAPTER uses the server's LoRA adapter on uncertain blocks.
 //!   cargo run --release --example pipeline -- models http://127.0.0.1:8091 eval/data eval/preds/routed
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -30,10 +30,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?),
     };
     let mut engine = OpenAiEngine::new("paddleocr-vl-1.6+layout", url);
+    // the server has the handwriting adapter loaded (`--lora`): use it on uncertain blocks
+    engine.has_adapter = std::env::var_os("MAKAAR_ADAPTER").is_some();
     let (root, out) = (PathBuf::from(root), PathBuf::from(out));
     let cfg = pipeline::PipelineConfig {
         formula_retry: std::env::var_os("MAKAAR_NO_FORMULA_RETRY").is_none(),
         grow_to_ink: std::env::var_os("MAKAAR_NO_GROW").is_none(),
+        adapter_below: std::env::var("MAKAAR_ADAPTER_BELOW")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(pipeline::ADAPTER_BELOW),
         ..Default::default()
     };
 

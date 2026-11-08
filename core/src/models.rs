@@ -54,6 +54,16 @@ pub const PADDLE_VL_MMPROJ: ModelFile = ModelFile {
     size: 881_770_560,
 };
 
+/// Optional LoRA adapter for handwriting, placed here by hand or by a later download step. It is
+/// trained partly on non-commercial data (CC BY-NC-SA 4.0; see DATASETS.md), so it is never
+/// bundled or required, and `convert --no-handwriting-adapter` turns it off.
+pub const HANDWRITING_ADAPTER: &str = "paddleocr-vl-1.6/handwriting-lora.gguf";
+
+/// The handwriting adapter, if installed in `dir`.
+pub fn handwriting_adapter(dir: &Path) -> Option<PathBuf> {
+    Some(dir.join(HANDWRITING_ADAPTER)).filter(|p| p.is_file())
+}
+
 pub const OCR_DET: ModelFile = ModelFile {
     repo: "PaddlePaddle/PP-OCRv6_small_det_onnx",
     rev: "28fe5895c24fd108c19eb3e8479f4ab385fbfc62",
@@ -209,6 +219,17 @@ pub fn sha256_file(path: &Path) -> Result<String, ModelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn handwriting_adapter_only_when_installed() {
+        let dir = std::env::temp_dir().join(format!("makaar-adapter-{}", std::process::id()));
+        assert_eq!(handwriting_adapter(&dir), None);
+        let p = dir.join(HANDWRITING_ADAPTER);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, b"gguf").unwrap();
+        assert_eq!(handwriting_adapter(&dir), Some(p));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn hashes_and_presence() {
