@@ -35,6 +35,8 @@ pub struct ConvertOptions {
     /// Discard earlier job state in `out` and start over.
     pub fresh: bool,
     pub no_specialist: bool,
+    /// Don't load the handwriting adapter even if it is installed.
+    pub no_adapter: bool,
 }
 
 impl ConvertOptions {
@@ -52,6 +54,7 @@ impl ConvertOptions {
             tectonic: None,
             fresh: false,
             no_specialist: false,
+            no_adapter: false,
         }
     }
 
@@ -166,6 +169,7 @@ fn recognize_pending(
         models::OCR_REC.path(&c.models).parent().unwrap(),
         c.threads,
     )?;
+    let adapter = models::handwriting_adapter(&c.models).filter(|_| !c.no_adapter);
     let mut engine: Box<dyn Engine> = match &c.server {
         Some(u) => Box::new(OpenAiEngine::new("paddleocr-vl-1.6", u)),
         None => Box::new(LazyServer::new(
@@ -174,6 +178,7 @@ fn recognize_pending(
             SidecarConfig {
                 model: models::PADDLE_VL.path(&c.models),
                 mmproj: models::PADDLE_VL_MMPROJ.path(&c.models),
+                lora: adapter,
                 threads: c.threads,
                 gpu_layers: c.gpu_layers,
                 ctx: 8192,

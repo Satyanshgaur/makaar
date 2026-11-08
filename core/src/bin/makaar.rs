@@ -49,6 +49,9 @@ enum Cmd {
         /// Send every region to the general model (no PP-OCR specialist).
         #[arg(long)]
         no_specialist: bool,
+        /// Don't load the handwriting adapter (models/paddleocr-vl-1.6/handwriting-lora.gguf).
+        #[arg(long)]
+        no_handwriting_adapter: bool,
     },
     /// Open the review screen for a converted document (`<out>/<name>.json`) in the browser;
     /// saving re-exports the other formats beside it.
@@ -108,6 +111,7 @@ fn main() {
             tectonic,
             fresh,
             no_specialist,
+            no_handwriting_adapter,
         } => {
             let mut c = ConvertOptions::new(inputs, out);
             c.name = name;
@@ -122,6 +126,7 @@ fn main() {
             c.tectonic = tectonic;
             c.fresh = fresh;
             c.no_specialist = no_specialist;
+            c.no_adapter = no_handwriting_adapter;
             app::convert(&c, &mut print_progress).map(|_| ())
         }
     };
@@ -210,6 +215,12 @@ fn run_models(dir: &Path, download: bool, verify: bool) -> Result<()> {
         };
         println!("  {:<48} {state}", m.dest);
     }
+    let adapter = if models::handwriting_adapter(dir).is_some() {
+        "installed (CC BY-NC-SA 4.0, free non-commercial use; see DATASETS.md)"
+    } else {
+        "not installed (optional)"
+    };
+    println!("  {:<48} {adapter}", models::HANDWRITING_ADAPTER);
     Ok(())
 }
 
