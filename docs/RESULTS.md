@@ -1,6 +1,6 @@
 # Results
 
-Scores are normalized edit distance (lower is better) after `clean_text`, which removes formatting, math delimiters and table markup. "Compact" also ignores whitespace. Measured 2026-11-07 on an i5-13420H with an RTX 3050 6 GB, PaddleOCR-VL-1.6 Q8 on llama.cpp. The datasets and how they were sampled are in DECISIONS 41.
+Scores are normalized edit distance (lower is better) after `clean_text`, which removes formatting, math delimiters and table markup. "Compact" also ignores whitespace. Measured 2026-11-07 on an i5-13420H with an RTX 3050 6 GB, PaddleOCR-VL-1.6 on llama.cpp (the official GGUF, which is unquantized BF16; earlier notes called it Q8 by mistake, see DECISIONS 50). The datasets and how they were sampled are in DECISIONS 41.
 
 ## Printed pages: OmniDocBench, 140 English pages
 
