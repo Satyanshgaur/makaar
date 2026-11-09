@@ -4,7 +4,7 @@
 
     kaggle kernels push -p <dir with train_lora.py and kernel-metadata.json> --accelerator NvidiaTeslaT4
 
-It checks the base model on 60 eval items, builds the mix (DATASETS.md), trains a rank-64 LoRA on the language model for `TRAIN_SECONDS`, scores base and adapter on the 450 eval items with makaar's metric and saves `adapter/`.
+It cuts printed replay blocks from DocLayNet and labels them with the base model on the second T4 while the first trains, checks the base model on 60 eval items, builds the mix (DATASETS.md), trains a rank-64 LoRA on the language model for `TRAIN_SECONDS`, scores base and adapter on the 450 eval items with makaar's metric and on 150 held-out printed blocks against the base model's own reading (forgetting check), and saves `adapter/`.
 
 To use the adapter with llama.cpp:
 

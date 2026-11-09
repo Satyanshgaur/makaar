@@ -25,6 +25,7 @@ Every dataset makaar evaluates or trains on, its licence, and what we may use it
 | [Handwritten Math Expressions](https://www.kaggle.com/datasets/govindaramsriram/handwritten-math-expressions-dataset) | CC BY 4.0 | Yes, with attribution | Candidate | | Arithmetic |
 | [IM2LATEX-230k](https://www.kaggle.com/datasets/gregoryeritsyan/im2latex-230k) | CC0 | Yes | LaTeX source for synthetic data | | Printed |
 | [HumynLabs notes](https://huggingface.co/datasets/HumynLabs) (4 sets) | CC BY 4.0 | Yes, with attribution | After labelling | Speed and loop rate | No ground truth |
+| [DocLayNet v1.2](https://huggingface.co/datasets/docling-project/DocLayNet-v1.2) (IBM) | CDLA-Permissive 1.0 | Yes | Printed replay blocks (train shard 0), labelled by the base model itself | | Self-distillation keeps the adapter from forgetting printed text; no human labels used |
 | [OmniDocBench](https://github.com/opendatalab/OmniDocBench) | Research use | No | Not used | 140 printed pages | |
 
 Not used: HME100K (terms unclear, treated as restricted by others), MathScrub (CC BY-NC 4.0; possible later for the free adapter), OpenWrite and Arabic HME (CC BY-SA 4.0; unclear whether ShareAlike reaches trained models).

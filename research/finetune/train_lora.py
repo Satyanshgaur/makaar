@@ -4,8 +4,10 @@ Free-tier research adapter: trains on non-commercial data (MathWriting train, CR
 so the adapter is CC BY-NC-SA 4.0 and must be replaced before any paid tier (DATASETS.md).
 Evaluation items (CROHME 2019, MathWriting test, IAM lines) are never trained on.
 
-Steps: sanity-check the base model on 60 eval items -> build the training mix -> train LoRA for a
-time budget -> evaluate base and adapter on all 450 eval items with makaar's metric -> save adapter.
+Steps: cut printed replay blocks and start labelling them with the base model on the second GPU ->
+sanity-check the base model on 60 eval items -> build the training mix -> train LoRA for a time budget,
+mixing in labelled replay blocks -> evaluate base and adapter on all 450 eval items with makaar's
+metric, and on 150 held-out printed blocks against the base model's own reading -> save adapter.
 """
 import subprocess
 import sys
@@ -31,7 +33,8 @@ from huggingface_hub import hf_hub_download  # noqa: E402
 from PIL import Image  # noqa: E402
 from transformers import AutoModelForImageTextToText, AutoProcessor  # noqa: E402
 
-TRAIN_SECONDS = float(os.environ.get("TRAIN_SECONDS", 4 * 3600))
+TRAIN_SECONDS = float(os.environ.get("TRAIN_SECONDS", 5 * 3600))
+REPLAY_P = float(os.environ.get("REPLAY_P", 0.35))  # share of training examples that are printed replay
 N_MATHWRITING = 30000
 SEED = 7
 OUT = "/kaggle/working"
@@ -69,6 +72,89 @@ def compact_ned(pred, truth):
     return normalized_edit_distance(a, b)
 
 
+# ---------------------------------------------------------------- printed replay (self-distillation)
+# Without it the adapter forgot printed text: always on, it stopped after the first line of a
+# paragraph (DECISIONS 54). Replay printed blocks from DocLayNet (CDLA-Permissive 1.0), labelled by
+# the base model itself, so the adapter learns to keep the base reading where it was already right.
+DLN = "docling-project/DocLayNet-v1.2"
+REPLAY_DIR, LABELS = f"{OUT}/replay", f"{OUT}/replay_labels.jsonl"
+# DocLayNet classes: caption, footnote, formula, list item, section header, text, title
+KEEP = {1: "OCR:", 2: "OCR:", 3: "Formula Recognition:", 4: "OCR:", 8: "OCR:", 10: "OCR:", 11: "OCR:"}
+os.makedirs(REPLAY_DIR, exist_ok=True)
+
+
+def dln_blocks(shard, n_pages, tag):
+    f = pq.ParquetFile(hf_hub_download(DLN, shard, repo_type="dataset"))
+    out, pages = [], 0
+    for g in range(f.num_row_groups):
+        for r in f.read_row_group(g, columns=["image", "bboxes", "category_id"]).to_pylist():
+            page = Image.open(io.BytesIO(r["image"]["bytes"])).convert("RGB")
+            for k, ((x, y, w, h), c) in enumerate(zip(r["bboxes"], r["category_id"])):
+                if c not in KEEP or w < 40 or h < 8 or h > 400:
+                    continue
+                if h < 20 and random.random() > 0.4:
+                    continue  # favour multi-line blocks: losing every line after the first was the fault
+                crop = page.crop((max(0, x - 3), max(0, y - 3), min(page.width, x + w + 3), min(page.height, y + h + 3)))
+                # DocLayNet pages are 1025 px; makaar renders about twice that
+                crop = crop.resize((crop.width * 2, crop.height * 2), Image.LANCZOS)
+                path = f"{REPLAY_DIR}/{tag}{pages:05d}_{k:02d}.png"
+                crop.save(path)
+                out.append({"id": os.path.basename(path)[:-4], "path": path, "prompt": KEEP[c]})
+            pages += 1
+            if pages >= n_pages:
+                return out
+    return out
+
+
+replay_val = dln_blocks("data/validation-00000-of-00007.parquet", 60, "val")
+random.shuffle(replay_val)
+replay_val = replay_val[:150]
+replay_train = dln_blocks("data/train-00000-of-00072.parquet", 10**6, "train")
+random.shuffle(replay_train)
+replay_by_id = {x["id"]: x for x in replay_val + replay_train}
+log("replay blocks: held out", len(replay_val), "train", len(replay_train))
+
+LABELER = r'''
+import json, sys, torch
+from PIL import Image
+from transformers import AutoModelForImageTextToText, AutoProcessor
+repo, items, out = sys.argv[1], json.load(open(sys.argv[2])), sys.argv[3]
+proc = AutoProcessor.from_pretrained(repo)
+model = AutoModelForImageTextToText.from_pretrained(repo, dtype=torch.float32).cuda().eval()
+with open(out, "a") as f:
+    for it in items:
+        img = Image.open(it["path"]).convert("RGB")
+        msgs = [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": it["prompt"]}]}]
+        inp = proc.apply_chat_template(msgs, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt").to("cuda")
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16):
+            o = model.generate(**inp, max_new_tokens=512, do_sample=False)
+        new = o[0][inp["input_ids"].shape[1]:]
+        f.write(json.dumps({"id": it["id"], "text": proc.decode(new, skip_special_tokens=True), "finished": len(new) < 512}) + "\n")
+        f.flush()
+'''
+open(f"{OUT}/labeler.py", "w").write(LABELER)
+json.dump(replay_val + replay_train, open(f"{OUT}/replay_items.json", "w"))
+# label on the second T4 while the first trains (same fp16 greedy decoding as `read` below)
+labeler = subprocess.Popen(
+    [sys.executable, f"{OUT}/labeler.py", REPO, f"{OUT}/replay_items.json", LABELS],
+    env={**os.environ, "CUDA_VISIBLE_DEVICES": "1" if torch.cuda.device_count() > 1 else "0"},
+    stdout=open(f"{OUT}/labeler.log", "w"), stderr=subprocess.STDOUT)
+log("labeler started on", "GPU 1" if torch.cuda.device_count() > 1 else "GPU 0 (shared)")
+
+
+def read_labels():
+    labels = {}
+    if os.path.exists(LABELS):
+        for line in open(LABELS, "rb").read().split(b"\n"):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue  # empty or half-written last line
+            if r["finished"] and r["text"].strip():
+                labels[r["id"]] = r["text"]
+    return labels
+
+
 # ---------------------------------------------------------------- model
 proc = model = None
 for trust in (False, True):
@@ -91,7 +177,7 @@ def chat(img, prompt, answer=None):
 
 
 def prompt_for(bucket):
-    return "OCR:" if bucket in ("iam_line", "gnhk_line", "gnhk_page") else "Formula Recognition:"
+    return "OCR:" if bucket in ("iam_line", "gnhk_line", "gnhk_page", "replay_ocr") else "Formula Recognition:"
 
 
 @torch.no_grad()
@@ -209,8 +295,28 @@ est_steps = 4000
 sched = torch.optim.lr_scheduler.LambdaLR(
     opt, lambda s: min(1.0, (s + 1) / WARMUP) * 0.5 * (1 + math.cos(math.pi * min(1.0, s / est_steps))))
 
+replay_uses, replay_pool = {}, []
+
+
+def with_replay():
+    """The handwriting mix with base-labelled printed blocks mixed in at REPLAY_P, each used at most 3 times."""
+    for k, ex in enumerate(train):
+        yield ex
+        if k % 50 == 0:
+            labels = read_labels()
+            replay_pool[:] = [(i, t) for i, t in labels.items() if i.startswith("train") and replay_uses.get(i, 0) < 3]
+        if replay_pool and random.random() < REPLAY_P / (1 - REPLAY_P):
+            i, text = replay_pool.pop(random.randrange(len(replay_pool)))
+            replay_uses[i] = replay_uses.get(i, 0) + 1
+            if replay_uses[i] < 3:
+                replay_pool.append((i, text))
+            it = replay_by_id[i]
+            src = "replay_ocr" if it["prompt"] == "OCR:" else "replay_formula"
+            yield src, open(it["path"], "rb").read(), text
+
+
 step, seen, losses, train_start = 0, 0, [], time.time()
-for i, (src, img_bytes, answer) in enumerate(train):
+for i, (src, img_bytes, answer) in enumerate(with_replay()):
     if time.time() - train_start > TRAIN_SECONDS:
         break
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -240,19 +346,42 @@ for i, (src, img_bytes, answer) in enumerate(train):
         sched.step()
         step += 1
         if step % 25 == 0:
-            log(f"step {step} examples {seen} loss {statistics.mean(losses[-200:]):.4f} lr {sched.get_last_lr()[0]:.2e}"
+            log(f"step {step} examples {seen} replay {sum(replay_uses.values())} loss {statistics.mean(losses[-200:]):.4f} lr {sched.get_last_lr()[0]:.2e}"
                 f" {(time.time() - train_start) / seen:.2f}s/example")
         if step % 500 == 0:
             model.save_pretrained(f"{OUT}/adapter")
 model.save_pretrained(f"{OUT}/adapter")
-log("trained", step, "steps on", seen, "examples")
+log("trained", step, "steps on", seen, "examples, of which replay", sum(replay_uses.values()))
+labeler.terminate()
 
 # ---------------------------------------------------------------- evaluation
 model.eval()
 tuned = evaluate(model, EVAL, "tuned")
 with model.disable_adapter():
     base = evaluate(model, EVAL, "base")
-json.dump({"base": base, "tuned": tuned, "steps": step, "examples": seen,
+
+
+def replay_eval(m, tag):
+    """Forgetting check: NED of a reading against the base model's own reading of held-out printed blocks."""
+    labels, rows = read_labels(), []
+    for it in replay_val:
+        if it["id"] not in labels:
+            continue
+        pred, ref = read(m, Image.open(it["path"]).convert("RGB"), it["prompt"], max_new=512), labels[it["id"]]
+        rows.append({"id": it["id"], "pred": pred, "ref": ref, "ned": normalized_edit_distance(clean_text(pred), clean_text(ref)),
+                     "short": len(pred) < 0.7 * len(ref)})
+    s = {"blocks": len(rows), "ned": round(statistics.mean(r["ned"] for r in rows), 4) if rows else None,
+         "stopped_short": sum(r["short"] for r in rows)}
+    log("printed replay", tag, s)
+    json.dump(rows, open(f"{OUT}/replay_eval_{tag}.json", "w"))
+    return s
+
+
+printed = {"tuned": replay_eval(model, "tuned")}
+with model.disable_adapter():
+    printed["base"] = replay_eval(model, "base")  # should be ~0: the labels are this model's greedy readings
+json.dump({"base": base, "tuned": tuned, "printed_vs_base": printed, "steps": step, "examples": seen,
+           "replay_examples": sum(replay_uses.values()), "replay_labelled": len(read_labels()),
            "mix": {"mathwriting": len(mw), "crohme": len(cr), "gnhk_lines": len(gnhk_lines), "gnhk_pages": len(gnhk_pages)}},
           open(f"{OUT}/summary.json", "w"), indent=1)
-log("done", {"base": base, "tuned": tuned})
+log("done", {"base": base, "tuned": tuned, "printed_vs_base": printed})
