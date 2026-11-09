@@ -32,4 +32,4 @@ Not used: HME100K (terms unclear, treated as restricted by others), MathScrub (C
 
 ## Attribution for the free-tier adapter
 
-Trained in part on MathWriting (Gerth et al., Google, CC BY-NC-SA 4.0), CROHME (ICDAR competitions on recognition of handwritten mathematical expressions) and GNHK (GoodNotes, CC BY 4.0).
+Trained in part on MathWriting (Gerth et al., Google, CC BY-NC-SA 4.0), CROHME (ICDAR competitions on recognition of handwritten mathematical expressions), GNHK (GoodNotes, CC BY 4.0) and DocLayNet (Pfitzmann et al., IBM, CDLA-Permissive 1.0).

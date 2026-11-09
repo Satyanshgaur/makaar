@@ -163,9 +163,10 @@ pub const FORMULA_MAX_WORDS: usize = 2;
 /// on CROHME and 0.247 to 0.179 on MathWriting, with IAM unchanged (0.061 → 0.058).
 pub const FORMULA_MARGIN: f64 = 0.05;
 
-/// Handwritten blocks score 0.75–0.89 and printed ones 0.91–1.00 (DECISIONS 37); below 0.93 the
-/// adapter reads 3.6% of printed general-model blocks and most handwriting.
-pub const ADAPTER_BELOW: f64 = 0.93;
+/// Handwritten blocks score 0.75–0.89 and printed ones 0.91–1.00 (DECISIONS 37). With the run-3
+/// adapter (trained with printed replay), 0.98 keeps all of its handwriting gain while leaving
+/// confident printed maths alone, where it restyles LaTeX (DECISIONS 56).
+pub const ADAPTER_BELOW: f64 = 0.98;
 
 /// An adapter reading replaces the base one only if it finished, isn't much shorter (the run-1
 /// adapter, trained on single lines, tended to stop after one line of a printed paragraph) and
@@ -670,7 +671,7 @@ mod tests {
         let b = read(0.8, "the adapter reading of a line");
         assert_eq!(b.text.as_deref(), Some("the adapter reading of a line"));
         assert_eq!(b.flagged, Some(true)); // flagged by the base confidence, not the adapter's
-        let b = read(0.97, "the adapter reading of a line");
+        let b = read(0.99, "the adapter reading of a line");
         assert_eq!(b.text.as_deref(), Some("the base reading of a line"));
         let b = read(0.8, "the adapter"); // stopped early: keep the base reading
         assert_eq!(b.text.as_deref(), Some("the base reading of a line"));
