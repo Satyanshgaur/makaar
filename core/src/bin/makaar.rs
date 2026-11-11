@@ -73,6 +73,11 @@ enum Cmd {
         /// llama.cpp build: cpu (works everywhere) or vulkan (most laptop GPUs).
         #[arg(long, default_value = "cpu")]
         backend: String,
+        /// Also download the optional handwriting adapter (48 MB; CC BY-NC-SA 4.0, free
+        /// non-commercial use only). Better handwritten maths, but those blocks take about twice
+        /// as long on a CPU.
+        #[arg(long)]
+        handwriting_adapter: bool,
     },
     /// Show model status; download missing files or verify checksums.
     Models {
@@ -82,6 +87,9 @@ enum Cmd {
         download: bool,
         #[arg(long)]
         verify: bool,
+        /// With --download, also fetch the optional handwriting adapter (see `setup`).
+        #[arg(long)]
+        handwriting_adapter: bool,
     },
 }
 
@@ -93,12 +101,26 @@ fn main() {
             formats,
             tectonic,
         } => review(&json, port, &formats, tectonic.as_deref()),
-        Cmd::Setup { dir, backend } => setup(&dir.unwrap_or_else(models::default_dir), &backend),
+        Cmd::Setup {
+            dir,
+            backend,
+            handwriting_adapter,
+        } => setup(
+            &dir.unwrap_or_else(models::default_dir),
+            &backend,
+            handwriting_adapter,
+        ),
         Cmd::Models {
             dir,
             download,
             verify,
-        } => run_models(&dir.unwrap_or_else(models::default_dir), download, verify),
+            handwriting_adapter,
+        } => run_models(
+            &dir.unwrap_or_else(models::default_dir),
+            download,
+            verify,
+            handwriting_adapter,
+        ),
         Cmd::Convert {
             inputs,
             out,
@@ -163,13 +185,13 @@ fn review(json: &Path, port: u16, formats: &str, tectonic: Option<&Path>) -> Res
     Ok(())
 }
 
-fn setup(dir: &Path, backend: &str) -> Result<()> {
+fn setup(dir: &Path, backend: &str, adapter: bool) -> Result<()> {
     let backend = match backend {
         "cpu" => runtime::Backend::Cpu,
         "vulkan" => runtime::Backend::Vulkan,
         other => return Err(format!("unknown backend {other}; use cpu or vulkan").into()),
     };
-    run_models(dir, true, false)?;
+    run_models(dir, true, false, adapter)?;
     match runtime::installed_server(dir) {
         Some(p) => println!("llama-server: {} (already installed)", p.display()),
         None => {
@@ -185,43 +207,57 @@ fn setup(dir: &Path, backend: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_models(dir: &Path, download: bool, verify: bool) -> Result<()> {
+fn run_models(dir: &Path, download: bool, verify: bool, adapter: bool) -> Result<()> {
     println!("models directory: {}", dir.display());
     for m in REQUIRED {
-        let state = if !m.present(dir) {
-            if download {
-                eprintln!(
-                    "downloading {} ({} MB) from {}",
-                    m.file,
-                    m.size >> 20,
-                    m.repo
-                );
-                m.download(dir, |done, total| {
-                    eprint!("\r  {} / {} MB", done >> 20, total >> 20);
-                })?;
-                eprintln!();
-                "downloaded, checksum ok"
-            } else {
-                "missing (run `makaar models --download`)"
-            }
-        } else if verify {
-            if m.verify(dir)? {
-                "checksum ok"
-            } else {
-                "CHECKSUM MISMATCH (delete it and download again)"
-            }
-        } else {
-            "present"
-        };
+        let state = model_state(dir, &m, download, verify)?;
         println!("  {:<48} {state}", m.dest);
     }
-    let adapter = if models::handwriting_adapter(dir).is_some() {
-        "installed (CC BY-NC-SA 4.0, free non-commercial use; see DATASETS.md)"
+    let m = models::HANDWRITING_ADAPTER_FILE;
+    let state = if m.present(dir) || (adapter && download) {
+        let state = model_state(dir, &m, download, verify)?;
+        format!("{state} (CC BY-NC-SA 4.0, free non-commercial use; see DATASETS.md)")
+    } else if models::handwriting_adapter(dir).is_some() {
+        "installed (not the published build)".into()
     } else {
-        "not installed (optional)"
+        "not installed (optional: `makaar setup --handwriting-adapter`)".into()
     };
-    println!("  {:<48} {adapter}", models::HANDWRITING_ADAPTER);
+    println!("  {:<48} {state}", m.dest);
     Ok(())
+}
+
+/// Downloads `m` if missing and `download`, or hashes it if `verify`.
+fn model_state(
+    dir: &Path,
+    m: &models::ModelFile,
+    download: bool,
+    verify: bool,
+) -> Result<&'static str> {
+    Ok(if !m.present(dir) {
+        if download {
+            eprintln!(
+                "downloading {} ({} MB) from {}",
+                m.file,
+                m.size >> 20,
+                m.repo
+            );
+            m.download(dir, |done, total| {
+                eprint!("\r  {} / {} MB", done >> 20, total >> 20);
+            })?;
+            eprintln!();
+            "downloaded, checksum ok"
+        } else {
+            "missing (run `makaar models --download`)"
+        }
+    } else if verify {
+        if m.verify(dir)? {
+            "checksum ok"
+        } else {
+            "CHECKSUM MISMATCH (delete it and download again)"
+        }
+    } else {
+        "present"
+    })
 }
 
 fn print_progress(p: Progress) {

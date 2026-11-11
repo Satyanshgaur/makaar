@@ -54,10 +54,20 @@ pub const PADDLE_VL_MMPROJ: ModelFile = ModelFile {
     size: 881_770_560,
 };
 
-/// Optional LoRA adapter for handwriting, placed here by hand or by a later download step. It is
-/// trained partly on non-commercial data (CC BY-NC-SA 4.0; see DATASETS.md), so it is never
-/// bundled or required, and `convert --no-handwriting-adapter` turns it off.
+/// Optional LoRA adapter for handwriting. It is trained partly on non-commercial data
+/// (CC BY-NC-SA 4.0; see DATASETS.md), so it is never bundled or required: it is downloaded only
+/// on request (`setup --handwriting-adapter`), and `convert --no-handwriting-adapter` turns it off.
 pub const HANDWRITING_ADAPTER: &str = "paddleocr-vl-1.6/handwriting-lora.gguf";
+
+/// The run-3 adapter (DECISIONS 56).
+pub const HANDWRITING_ADAPTER_FILE: ModelFile = ModelFile {
+    repo: "satyansh0/makaar-handwriting-lora",
+    rev: "b36979f5ae7a8cb1955dd18213d7b248321258eb",
+    file: "handwriting-lora.gguf",
+    dest: HANDWRITING_ADAPTER,
+    sha256: "569eb432c3b4cb3f6f78814e1219dc7f341a347976667e39eff068a8ff68fd8a",
+    size: 48_382_912,
+};
 
 /// The handwriting adapter, if installed in `dir`.
 pub fn handwriting_adapter(dir: &Path) -> Option<PathBuf> {
@@ -256,6 +266,10 @@ mod tests {
         assert_eq!(
             LAYOUT.url(),
             "https://huggingface.co/PaddlePaddle/PP-DocLayoutV3_onnx/resolve/46bbdf188bb0a772c08aed74882ce7e51a8f1ea6/inference.onnx"
+        );
+        assert_eq!(
+            HANDWRITING_ADAPTER_FILE.url(),
+            "https://huggingface.co/satyansh0/makaar-handwriting-lora/resolve/b36979f5ae7a8cb1955dd18213d7b248321258eb/handwriting-lora.gguf"
         );
     }
 }
