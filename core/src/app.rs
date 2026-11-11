@@ -193,6 +193,11 @@ fn recognize_pending(
     };
     let cfg = PipelineConfig {
         adapter_only,
+        flag_below: if adapter_only {
+            pipeline::FLAG_BELOW_ADAPTER
+        } else {
+            pipeline::FLAG_BELOW
+        },
         ..Default::default()
     };
     let index = |id: i64| rows.iter().position(|(p, _)| p.id == id).unwrap_or(0);

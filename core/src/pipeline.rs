@@ -104,6 +104,11 @@ pub fn disagreement(a: &str, b: &str) -> f64 {
 /// printed ones in the eval set; provisional until the test set calibrates it.
 pub const FLAG_BELOW: f64 = 0.9;
 
+/// In handwritten mode the adapter's own confidence decides flags. On 300 handwritten maths
+/// items, 0.93 flags 38% with 0.52 precision and 0.68 recall for NED > 0.2, against 0.43 / 0.60
+/// at 0.9 (DECISIONS 58).
+pub const FLAG_BELOW_ADAPTER: f64 = 0.93;
+
 /// Prose regions a line reader can handle. Code (`algorithm`) needs its layout kept, and the
 /// whole-page fallback is handwriting, so both go to the general model.
 pub fn specialist_eligible(b: &Block) -> bool {
