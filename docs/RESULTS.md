@@ -56,9 +56,9 @@ Gate 1 (printed within 3 points of Gemini Flash) passes: makaar is 6 points bett
 |---|---|
 | Handwritten linear-algebra notes (HumynLabs, 20) | ~70 (gate: 60) |
 | Original printed eval pages (3) | 1.5–38 |
-| Same notes, 10 pages, without / with the handwriting adapter | 62 / 118 |
+| Same notes, 10 pages: no adapter / adapter re-read / `--handwritten` | 62 / 118 / 62 |
 
-The adapter re-reads uncertain blocks, so it roughly doubles handwriting time on a CPU. llama.cpp's Vulkan build on the i5-13420H's integrated GPU was about 3× slower than the CPU (DECISIONS 57).
+By default the adapter re-reads uncertain blocks, which roughly doubles handwriting time on a CPU; `--handwritten` reads each block once with the adapter and scores better on handwriting (DECISIONS 58). llama.cpp's Vulkan build on the i5-13420H's integrated GPU was about 3× slower than the CPU (DECISIONS 57).
 
 ## Reproduce
 

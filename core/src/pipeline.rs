@@ -37,6 +37,9 @@ pub struct PipelineConfig {
     pub formula_retry: bool,
     /// Base readings below this confidence are re-read with the handwriting adapter, if loaded.
     pub adapter_below: f64,
+    /// Handwritten notes: read every general-model block once, with the adapter on, instead of
+    /// reading it with the base model and again with the adapter when uncertain.
+    pub adapter_only: bool,
     /// Widen text and formula boxes along their line to take in ink next to them (see `grow_to_ink`).
     pub grow_to_ink: bool,
 }
@@ -52,6 +55,7 @@ impl Default for PipelineConfig {
             formula_retry: true,
             grow_to_ink: true,
             adapter_below: ADAPTER_BELOW,
+            adapter_only: false,
         }
     }
 }
@@ -167,6 +171,23 @@ pub const FORMULA_MARGIN: f64 = 0.05;
 /// adapter (trained with printed replay), 0.98 keeps all of its handwriting gain while leaving
 /// confident printed maths alone, where it restyles LaTeX (DECISIONS 56).
 pub const ADAPTER_BELOW: f64 = 0.98;
+
+/// One general-model reading: with the handwriting adapter when `adapter_only` and the engine has
+/// one, else the base model.
+fn read(
+    engine: &mut dyn Engine,
+    region: &RgbImage,
+    task: Task,
+    budget: u32,
+    adapter_only: bool,
+) -> Result<crate::engine::Recognition, EngineError> {
+    if adapter_only {
+        if let Some(r) = engine.recognize_with_adapter(region, task, budget) {
+            return r;
+        }
+    }
+    engine.recognize(region, task, budget)
+}
 
 /// An adapter reading replaces the base one only if it finished, isn't much shorter (the run-1
 /// adapter, trained on single lines, tended to stop after one line of a printed paragraph) and
@@ -379,14 +400,14 @@ pub fn recognize_page_routed(
                 continue;
             }
         }
-        let mut rec = engine.recognize(&region, task, budget)?;
+        let mut rec = read(engine, &region, task, budget, cfg.adapter_only)?;
         if cfg.formula_retry
             && task == Task::Text
             && b.label.as_deref() != Some("algorithm")
             && !rec.truncated
             && words(&rec.text) <= FORMULA_MAX_WORDS
         {
-            let f = engine.recognize(&region, Task::Formula, budget)?;
+            let f = read(engine, &region, Task::Formula, budget, cfg.adapter_only)?;
             if !f.text.trim().is_empty()
                 && !f.truncated
                 && !wordy_formula(&f.text)
@@ -400,7 +421,7 @@ pub fn recognize_page_routed(
         // Review flags keep using the base model's confidence, so a confident adapter can't
         // hide an uncertain block.
         let base_confidence = rec.confidence();
-        if base_confidence < cfg.adapter_below && !rec.truncated {
+        if !cfg.adapter_only && base_confidence < cfg.adapter_below && !rec.truncated {
             let used = if b.kind == BlockType::Formula { Task::Formula } else { task };
             match engine.recognize_with_adapter(&region, used, budget) {
                 Some(Ok(a)) if adapter_reading_ok(&rec.text, &a) => rec = a,
@@ -675,6 +696,39 @@ mod tests {
         assert_eq!(b.text.as_deref(), Some("the base reading of a line"));
         let b = read(0.8, "the adapter"); // stopped early: keep the base reading
         assert_eq!(b.text.as_deref(), Some("the base reading of a line"));
+    }
+
+    #[test]
+    fn adapter_only_reads_once_with_the_adapter() {
+        let img = RgbImage::new(100, 100);
+        let cfg = PipelineConfig {
+            adapter_only: true,
+            ..Default::default()
+        };
+        let b = recognize_page(
+            &img,
+            0,
+            &mut FixedLayout(vec![region("text", [0., 0., 50., 10.], 1.)]),
+            &mut WithAdapter(0.99, "the adapter reading of a line"),
+            &cfg,
+        )
+        .unwrap()
+        .blocks
+        .remove(0);
+        assert_eq!(b.text.as_deref(), Some("the adapter reading of a line"));
+        assert_eq!(b.engine.as_deref(), Some("base+handwriting-lora"));
+        // without an adapter it falls back to the base model
+        let b = recognize_page(
+            &img,
+            0,
+            &mut FixedLayout(vec![region("text", [0., 0., 50., 10.], 1.)]),
+            &mut Fixed("the base reading", 0.99),
+            &cfg,
+        )
+        .unwrap()
+        .blocks
+        .remove(0);
+        assert_eq!(b.text.as_deref(), Some("the base reading"));
     }
 
     #[test]

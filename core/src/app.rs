@@ -37,6 +37,9 @@ pub struct ConvertOptions {
     pub no_specialist: bool,
     /// Don't load the handwriting adapter even if it is installed.
     pub no_adapter: bool,
+    /// Handwritten notes: read each block once, with the handwriting adapter (if installed),
+    /// instead of twice. About twice as fast on a CPU; printed maths may be restyled.
+    pub handwritten: bool,
 }
 
 impl ConvertOptions {
@@ -55,6 +58,7 @@ impl ConvertOptions {
             fresh: false,
             no_specialist: false,
             no_adapter: false,
+            handwritten: false,
         }
     }
 
@@ -170,6 +174,7 @@ fn recognize_pending(
         c.threads,
     )?;
     let adapter = models::handwriting_adapter(&c.models).filter(|_| !c.no_adapter);
+    let adapter_only = c.handwritten && adapter.is_some();
     let mut engine: Box<dyn Engine> = match &c.server {
         Some(u) => Box::new(OpenAiEngine::new("paddleocr-vl-1.6", u)),
         None => Box::new(LazyServer::new(
@@ -186,7 +191,10 @@ fn recognize_pending(
             },
         )),
     };
-    let cfg = PipelineConfig::default();
+    let cfg = PipelineConfig {
+        adapter_only,
+        ..Default::default()
+    };
     let index = |id: i64| rows.iter().position(|(p, _)| p.id == id).unwrap_or(0);
     let total = rows.len();
     let files = c.out.join(format!("{}_files", c.name));
