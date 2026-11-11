@@ -56,6 +56,7 @@
       <label><input type="checkbox" class="fmt" value="tex" checked> LaTeX (+PDF)</label>
       <label><input type="checkbox" class="fmt" value="docx" checked> Word</label>
       <label title="Use the graphics card if llama.cpp can"><input type="checkbox" id="gpu" checked> Use GPU</label>
+      <label title="Read every block once with the handwriting adapter, if installed: better handwritten maths at normal speed, but printed maths may be restyled"><input type="checkbox" id="handwritten"> Handwritten notes</label>
     </div>
   </section>
 
@@ -123,7 +124,7 @@ $("go").onclick = async () => {
   $("go").disabled = true; $("doneRow").classList.add("hidden"); $("log").innerHTML = "";
   $("bar").classList.remove("hidden"); $("bar").value = 0; $("state").textContent = "starting…";
   try {
-    json = await invoke("convert", { inputs, out, formats, gpu: $("gpu").checked });
+    json = await invoke("convert", { inputs, out, formats, gpu: $("gpu").checked, handwritten: $("handwritten").checked });
     $("doneRow").classList.remove("hidden");
   } catch (e) { $("state").textContent = "failed"; log(String(e), "bad"); }
   refresh();

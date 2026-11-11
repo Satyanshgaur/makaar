@@ -52,6 +52,10 @@ enum Cmd {
         /// Don't load the handwriting adapter (models/paddleocr-vl-1.6/handwriting-lora.gguf).
         #[arg(long)]
         no_handwriting_adapter: bool,
+        /// Handwritten notes: read each block once with the handwriting adapter instead of
+        /// twice, about twice as fast on a CPU. Leave it off for printed documents.
+        #[arg(long)]
+        handwritten: bool,
     },
     /// Open the review screen for a converted document (`<out>/<name>.json`) in the browser;
     /// saving re-exports the other formats beside it.
@@ -134,6 +138,7 @@ fn main() {
             fresh,
             no_specialist,
             no_handwriting_adapter,
+            handwritten,
         } => {
             let mut c = ConvertOptions::new(inputs, out);
             c.name = name;
@@ -149,6 +154,7 @@ fn main() {
             c.fresh = fresh;
             c.no_specialist = no_specialist;
             c.no_adapter = no_handwriting_adapter;
+            c.handwritten = handwritten;
             app::convert(&c, &mut print_progress).map(|_| ())
         }
     };

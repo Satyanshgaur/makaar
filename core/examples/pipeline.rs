@@ -1,7 +1,7 @@
 //! Layout + per-region recognition over an eval dataset (`<root>/<bucket>/<page>.png`). Writes
 //! `<out>/<bucket>/<page>.md` (score with `runner --predictions`), the page JSON beside it, and
 //! per-page seconds to `<out>/timings.json`. Routes like `makaar convert` (PP-OCR specialist first)
-//! unless MAKAAR_NO_SPECIALIST is set; MAKAAR_NO_FORMULA_RETRY turns off re-reading short blocks as formulas, MAKAAR_NO_GROW widening boxes to adjacent ink; MAKAAR_ADAPTER uses the server's LoRA adapter on uncertain blocks.
+//! unless MAKAAR_NO_SPECIALIST is set; MAKAAR_NO_FORMULA_RETRY turns off re-reading short blocks as formulas, MAKAAR_NO_GROW widening boxes to adjacent ink; MAKAAR_ADAPTER uses the server's LoRA adapter on uncertain blocks, and with MAKAAR_ADAPTER_ONLY on every block instead of the base model.
 //!   cargo run --release --example pipeline -- models http://127.0.0.1:8091 eval/data eval/preds/routed
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(pipeline::ADAPTER_BELOW),
+        adapter_only: std::env::var_os("MAKAAR_ADAPTER_ONLY").is_some(),
         ..Default::default()
     };
 

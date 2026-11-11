@@ -142,12 +142,13 @@ fn default_output(app: AppHandle, inputs: Vec<String>) -> String {
 /// Runs a conversion on a worker thread; progress arrives as `progress` events. Returns the
 /// document JSON path when done.
 #[tauri::command]
-async fn convert(app: AppHandle, inputs: Vec<String>, out: String, formats: Vec<String>, gpu: bool) -> Result<String, String> {
+async fn convert(app: AppHandle, inputs: Vec<String>, out: String, formats: Vec<String>, gpu: bool, handwritten: bool) -> Result<String, String> {
     let busy = Busy::take()?;
     tauri::async_runtime::spawn_blocking(move || {
         let _busy = busy;
         let mut c = ConvertOptions::new(inputs.into_iter().map(PathBuf::from).collect(), out.into());
         c.formats = formats;
+        c.handwritten = handwritten;
         if !gpu {
             c.gpu_layers = Some(0);
         }
