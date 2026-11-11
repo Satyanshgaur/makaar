@@ -15,6 +15,8 @@ core/target/release/makaar review out/notes.json      # fix flagged blocks in th
 
 `setup` installs llama.cpp's official CPU build for your platform (`--backend vulkan` uses most laptop GPUs); an existing `llama-server` on PATH or `$MAKAAR_LLAMA_SERVER` also works. `tectonic` is optional and enables the LaTeX compile check. Use `--gpu-layers 0` for CPU only. Rerun the same command to resume an interrupted job.
 
+`setup --handwriting-adapter` also fetches the optional handwriting adapter ([satyansh0/makaar-handwriting-lora](https://huggingface.co/satyansh0/makaar-handwriting-lora), 48 MB). It reads handwritten maths better, but it is CC BY-NC-SA 4.0 (free, non-commercial use only; see `DATASETS.md`), and on a CPU it roughly doubles the time spent on handwritten blocks.
+
 ## Desktop app
 
 `desktop/` is a Tauri window over the same core: pick pages (images or PDFs), convert, review. Build installers with `cd desktop && cargo tauri build` (Linux needs `webkit2gtk4.1-devel`), or take them from the release workflow.
