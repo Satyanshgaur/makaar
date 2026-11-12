@@ -46,6 +46,10 @@
       <span class="muted" id="count">nothing chosen</span>
     </div>
     <ul id="inputs"></ul>
+    <div class="hidden" id="hwRow" style="margin-top:8px">
+      <label><input type="checkbox" id="handwritten"> <b>Handwritten notes</b></label>
+      <span class="muted" id="hwState">Higher accuracy on handwriting. Leave it off for printed pages. The first time, it downloads a 48 MB add-on (free for non-commercial use, CC BY-NC-SA 4.0).</span>
+    </div>
   </section>
 
   <section>
@@ -56,11 +60,6 @@
       <label><input type="checkbox" class="fmt" value="tex" checked> LaTeX (+PDF)</label>
       <label><input type="checkbox" class="fmt" value="docx" checked> Word</label>
       <label title="Use the graphics card if llama.cpp can"><input type="checkbox" id="gpu" checked> Use GPU</label>
-      <label title="Read every block once with the handwriting adapter, if installed: better handwritten maths at normal speed, but printed maths may be restyled"><input type="checkbox" id="handwritten"> Handwritten notes</label>
-    </div>
-    <div class="row hidden" id="adapterRow" style="margin-top:8px">
-      <button id="adapterBtn">Get the handwriting adapter (48 MB)</button>
-      <span class="muted" id="adapterState">Reads handwritten maths better. Free for non-commercial use (CC BY-NC-SA 4.0).</span>
     </div>
   </section>
 
@@ -82,7 +81,7 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
-let inputs = [], out = null, json = null, ready = false;
+let inputs = [], out = null, json = null, ready = false, adapter = false, fetching = false;
 
 function log(line, cls) {
   const el = $("log"); el.classList.remove("hidden");
@@ -93,13 +92,14 @@ function refresh() {
   $("count").textContent = inputs.length ? `${inputs.length} chosen` : "nothing chosen";
   $("inputs").innerHTML = ""; for (const p of inputs) { const li = document.createElement("li"); li.textContent = p; $("inputs").appendChild(li); }
   $("out").textContent = out || "—";
-  $("go").disabled = !(ready && inputs.length && out);
+  $("go").disabled = !(ready && inputs.length && out) || fetching;
+  $("hwRow").classList.toggle("hidden", !inputs.length);
 }
 async function checkStatus() {
   const s = await invoke("status");
   ready = s.missing.length === 0 && !!s.llama_server;
   $("setup").classList.toggle("hidden", ready);
-  $("adapterRow").classList.toggle("hidden", s.adapter);
+  adapter = s.adapter;
   $("setupText").textContent = `makaar needs its reading models (${s.download_mb} MB, downloaded once into ${s.models_dir} and checked).`;
   refresh();
 }
@@ -119,12 +119,15 @@ $("setupBtn").onclick = async () => {
   try { await invoke("setup"); $("setupItem").textContent = "done"; } catch (e) { $("setupItem").textContent = "failed: " + e; $("setupItem").className = "bad"; }
   $("setupBtn").disabled = false; checkStatus();
 };
-$("adapterBtn").onclick = async () => {
-  $("adapterBtn").disabled = true;
-  try { await invoke("get_adapter"); } catch (e) { $("adapterState").textContent = "failed: " + e; $("adapterState").className = "bad"; }
-  $("adapterBtn").disabled = false; checkStatus();
+// Handwritten mode needs the adapter: ticking the box fetches it the first time.
+$("handwritten").onchange = async () => {
+  if (!$("handwritten").checked || adapter) return;
+  fetching = true; $("handwritten").disabled = true; refresh();
+  try { await invoke("get_adapter"); $("hwState").textContent = "Add-on ready."; $("hwState").className = "muted"; }
+  catch (e) { $("handwritten").checked = false; $("hwState").textContent = "Download failed: " + e; $("hwState").className = "bad"; }
+  fetching = false; $("handwritten").disabled = false; await checkStatus();
 };
-listen("adapter", (e) => { $("adapterState").textContent = `${e.payload.done >> 20} / ${e.payload.total >> 20} MB`; });
+listen("adapter", (e) => { $("hwState").textContent = `Downloading the add-on: ${e.payload.done >> 20} / ${e.payload.total >> 20} MB`; });
 listen("setup", (e) => {
   const p = e.payload; $("setupBar").max = p.total; $("setupBar").value = p.done;
   $("setupItem").textContent = `${p.item}: ${p.done >> 20} / ${p.total >> 20} MB`;

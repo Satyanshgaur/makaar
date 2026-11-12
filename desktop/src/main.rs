@@ -167,7 +167,9 @@ async fn convert(app: AppHandle, inputs: Vec<String>, out: String, formats: Vec<
         let _busy = busy;
         let mut c = ConvertOptions::new(inputs.into_iter().map(PathBuf::from).collect(), out.into());
         c.formats = formats;
+        // Ticked: every block read once with the adapter. Unticked: the base model alone, best on print.
         c.handwritten = handwritten;
+        c.no_adapter = !handwritten;
         if !gpu {
             c.gpu_layers = Some(0);
         }
