@@ -1,4 +1,7 @@
 {
+  "buildCommand": "",
+  "outputDirectory": "site",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- site/ vercel.json",
   "cleanUrls": true,
   "headers": [
     { "source": "/img/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400" }] },
