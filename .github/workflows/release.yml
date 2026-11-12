@@ -85,4 +85,6 @@ jobs:
         run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes "Run makaar setup first; see the README."
-          for f in desktop/target/release/bundle/*/*.{deb,AppImage,dmg,exe}; do [ -e "$f" ] && gh release upload "$GITHUB_REF_NAME" "$f" --clobber; done
+          for f in desktop/target/release/bundle/*/*.{deb,AppImage,dmg,exe}; do
+            if [ -e "$f" ]; then gh release upload "$GITHUB_REF_NAME" "$f" --clobber; fi
+          done
