@@ -1,8 +1,16 @@
 # makaar
 
-Open-source, offline notes-to-LaTeX/Markdown/Word converter. See `docs/research.md` for the research and build plan, `docs/DECISIONS.md` for where we diverge from it, and `docs/RESULTS.md` for measured accuracy and speed.
+Turn scanned or photographed notes, handwritten or printed, into Markdown, LaTeX and Word, entirely on your own computer. Nothing is uploaded. Maths comes out as real equations: LaTeX you can compile, equations you can edit in Word. Blocks the model is unsure of are flagged for a quick review.
 
-Status: Phase 3. The `makaar` CLI converts page images end to end, offline: layout, per-region recognition, then Markdown, compile-checked LaTeX and Word. Gate 1 is still open: only 10 eval pages so far.
+**Download:** [latest release](https://github.com/Satyanshgaur/makaar/releases/latest). Get the desktop app for Windows, macOS or Linux; the first run downloads the reading models (about 1.9 GB, checked).
+
+**How good is it?** On 126 printed OmniDocBench pages, makaar's error (clean NED, lower is better) is 0.130, against 0.207 for Gemini 3.5 Flash-Lite. On handwritten maths (CROHME, 30 items) it is level with Gemini 3.5 Flash; on handwritten prose Gemini is still clearly better. Details are in [`docs/RESULTS.md`](docs/RESULTS.md).
+
+**How fast?** About a minute a page on a recent laptop CPU, and about 2 minutes on an older dual-core one. A GPU is much faster.
+
+The installers are not code-signed yet. On Windows, click *More info → Run anyway*. On macOS, right-click the app and choose *Open*, or allow it under *System Settings → Privacy & Security*.
+
+For the research and build plan see `docs/research.md`; `docs/DECISIONS.md` records where we diverged from it.
 
 ## Try it
 
@@ -31,3 +39,7 @@ Beta testers: see `docs/BETA.md`. `convert` ends with a `speed:` line (median s/
 
 ## Dev
     cd eval && uv run pytest
+
+## License
+
+makaar's code is Apache 2.0 (`LICENSE`). The reading models it downloads, PaddleOCR-VL 1.6, PP-DocLayoutV3 and PP-OCRv6, are Apache 2.0. The optional handwriting add-on ([satyansh0/makaar-handwriting-lora](https://huggingface.co/satyansh0/makaar-handwriting-lora)) is CC BY-NC-SA 4.0, for non-commercial use only, because of its training data (see `DATASETS.md`).
