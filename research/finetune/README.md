@@ -19,3 +19,5 @@ To use the adapter with llama.cpp:
     cp handwriting-lora.gguf models/paddleocr-vl-1.6/
 
 The adapter is CC BY-NC-SA 4.0 (free, non-commercial use only); see DATASETS.md.
+
+`grpo_lora.py` runs the same way (kernel `makaar-hw-grpo`). Starting from the published run-3 adapter, it runs GRPO on handwritten maths with a KL penalty to run 3, then scores the result against run 3. The result was within noise (DECISIONS 59).
