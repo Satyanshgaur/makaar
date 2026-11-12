@@ -7,7 +7,7 @@
 use image::RgbImage;
 
 use crate::document::{Block, BlockType, Page};
-use crate::engine::{Engine, EngineError, Task};
+use crate::engine::{counting_loop, Engine, EngineError, Task};
 use crate::layout::{to_blocks, LayoutDetector, LayoutError};
 
 #[derive(Debug, thiserror::Error)]
@@ -231,7 +231,8 @@ fn token_budget(bbox: [f64; 4], width: u32, height: u32, page_tokens: u32) -> u3
 }
 
 /// If `text` ends in a run of one repeated unit (the model looping until the budget ran out),
-/// returns it cut after the unit's first occurrence. Needs the unit to repeat at least 4 times.
+/// returns it cut after the unit's first occurrence. Needs the unit to repeat at least 4 times,
+/// or a counting loop (see [`counting_loop`]).
 pub fn trim_loop(text: &str) -> Option<String> {
     let c: Vec<char> = text.chars().collect();
     let n = c.len();
@@ -242,13 +243,60 @@ pub fn trim_loop(text: &str) -> Option<String> {
             best = Some((run, unit));
         }
     }
-    best.map(|(run, _)| {
-        c[..n - run]
-            .iter()
-            .collect::<String>()
-            .trim_end()
-            .to_string()
-    })
+    let cut = best.map(|(run, _)| n - run);
+    let cut = match (cut, counting_loop(text, 0)) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    cut.map(|k| c[..k].iter().collect::<String>().trim_end().to_string())
+}
+
+/// Sub- and superscripts the model wrote outside maths, as HTML (`E<sub>i</sub>`) or as a script
+/// with its base left outside (`e\\(^{-}\\)`), become inline maths: Word and LaTeX show neither.
+pub fn tidy_scripts(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let html = ["<sub>", "<sup>"].iter().filter_map(|t| rest.find(t).map(|i| (i, *t))).min();
+        let bare = ["\\(^", "\\(_"].iter().filter_map(|t| rest.find(t).map(|i| (i, *t))).min();
+        let Some((i, tag)) = html.into_iter().chain(bare).min() else {
+            out.push_str(rest);
+            return out;
+        };
+        // The base: the word just before, letters and digits only.
+        let base = rest[..i].len() - rest[..i].chars().rev().take_while(|c| c.is_alphanumeric()).map(char::len_utf8).sum::<usize>();
+        let (script, body, after) = if tag.starts_with('<') {
+            let close = if tag == "<sub>" { "</sub>" } else { "</sup>" };
+            match rest[i + 5..].find(close) {
+                Some(j) => (if tag == "<sub>" { '_' } else { '^' }, &rest[i + 5..i + 5 + j], i + 5 + j + 6),
+                None => (' ', "", 0),
+            }
+        } else {
+            match rest[i..].find("\\)") {
+                Some(j) => (' ', &rest[i + 2..i + j], i + j + 2),
+                None => (' ', "", 0),
+            }
+        };
+        if after == 0 || base == i {
+            // Unclosed, or nothing to attach to: keep as is.
+            out.push_str(&rest[..i + tag.len()]);
+            rest = &rest[i + tag.len()..];
+            continue;
+        }
+        out.push_str(&rest[..base]);
+        out.push_str("\\(");
+        out.push_str(&rest[base..i]);
+        if script == ' ' {
+            out.push_str(body);
+        } else {
+            out.push(script);
+            out.push('{');
+            out.push_str(body);
+            out.push('}');
+        }
+        out.push_str("\\)");
+        rest = &rest[after..];
+    }
 }
 
 /// Ink: pixels well below the page's median brightness (grey paper and photos included).
@@ -440,13 +488,16 @@ pub fn recognize_page_routed(
         if base_confidence < cfg.flag_below || disagrees {
             b.flagged = Some(true);
         }
-        if rec.truncated {
+        let text = if rec.truncated {
             // Hit the budget: drop the repeated tail and send the block to review.
             b.flagged = Some(true);
-            b.text = Some(trim_loop(&rec.text).unwrap_or(rec.text));
+            trim_loop(&rec.text).unwrap_or(rec.text)
         } else {
-            b.text = Some(rec.text);
-        }
+            rec.text
+        };
+        // Code keeps its characters; HTML in it is meant literally.
+        let code = b.label.as_deref() == Some("algorithm");
+        b.text = Some(if code { text } else { tidy_scripts(&text) });
     }
     Ok(Page {
         index,
@@ -848,10 +899,23 @@ mod tests {
     }
 
     #[test]
+    fn tidies_scripts_outside_maths() {
+        assert_eq!(tidy_scripts("f(Ei) against E<sub>i</sub> exp"), "f(Ei) against \\(E_{i}\\) exp");
+        assert_eq!(tidy_scripts("x<sup>2</sup>+y<sub>ab</sub>"), "\\(x^{2}\\)+\\(y_{ab}\\)");
+        assert_eq!(tidy_scripts("free e\\(^{-}\\) in metal"), "free \\(e^{-}\\) in metal");
+        // already fine, unclosed, or with nothing to attach to: unchanged
+        for s in ["\\(E_{i}\\) and \\(x\\)", "a <sub>i</sub>", "E<sub>i", "(\\(^{3}\\)He)"] {
+            assert_eq!(tidy_scripts(s), s);
+        }
+    }
+
+    #[test]
     fn trim_loop_needs_four_repeats() {
         assert_eq!(trim_loop("ab ab ab ab "), Some("ab".into()));
         assert_eq!(trim_loop("x = 1, 2, 3"), None);
         assert_eq!(trim_loop("aaa"), None);
         assert_eq!(trim_loop("n-1\nn-1\nn-1\nn-1\nn-"), Some("n-1".into()));
+        let counted: String = (1..100).chain(10..30).map(|k| format!("\\( L_{{{k}}} \\)\n\n")).collect();
+        assert_eq!(trim_loop(&format!("w = 1\n\n{counted}")), Some("w = 1\n\n\\( L_{1} \\)".into()));
     }
 }

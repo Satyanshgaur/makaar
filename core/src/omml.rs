@@ -219,6 +219,7 @@ const SYMBOLS: &[(&str, &str)] = &[
     ("!", ""),
     (" ", " "),
     ("quad", "\u{2003}"),
+    ("S", "§"),
     ("qquad", "\u{2003}\u{2003}"),
 ];
 
@@ -371,6 +372,7 @@ impl Parser {
                 }
                 Some(Tok::Char(c)) => s.push(c),
                 Some(Tok::Space | Tok::Newline) => s.push(' '),
+                Some(Tok::Cmd(c)) if c == "textcircled" => s.push_str(&circled(&self.raw_arg()?)),
                 Some(Tok::Cmd(c)) => match SYMBOLS.iter().find(|(n, _)| *n == c) {
                     Some((_, u)) => s.push_str(u),
                     None => {
@@ -480,6 +482,19 @@ impl Parser {
                 }
                 n
             }
+            "textcircled" => {
+                let s = self.raw_arg()?;
+                run(circled(&s))
+            }
+            "xrightarrow" | "xleftarrow" => {
+                if self.peek() == Some(&Tok::Char('[')) {
+                    while self.next().is_some_and(|t| t != Tok::Char(']')) {}
+                }
+                let arrow = run(if c == "xrightarrow" { "→" } else { "←" }.into());
+                Node::Over(Box::new(arrow), Box::new(self.arg()?))
+            }
+            "underbrace" => Node::Bar(false, Box::new(self.arg()?)),
+            "overbrace" => Node::Bar(true, Box::new(self.arg()?)),
             "phantom" | "hphantom" | "vphantom" | "label" | "tag" => {
                 self.arg()?;
                 return Ok(None);
@@ -536,6 +551,14 @@ impl Parser {
             "cases" => Node::Delim("{".into(), String::new(), Box::new(m)),
             _ => m,
         })
+    }
+}
+
+/// `\textcircled{3}` → ③ (1–20), anything else in brackets.
+fn circled(s: &str) -> String {
+    match s.trim().parse::<u32>() {
+        Ok(n @ 1..=20) => char::from_u32(0x2460 + n - 1).unwrap().to_string(),
+        _ => format!("({})", s.trim()),
     }
 }
 
@@ -837,6 +860,10 @@ mod tests {
         assert!(body("a < b").contains("&lt;"));
         assert!(body("\\log n \\le \\Theta(n)").contains("Θ"));
         assert!(body("\\overline{AB}").contains("<m:bar>"));
+        assert!(body("\\sum n_i = 0 \\quad \\textcircled{2}").contains("②"));
+        assert!(body("\\text{eqn \\textcircled{7} by}").contains("eqn ⑦ by"));
+        assert!(body("a \\xrightarrow{n_i} b").contains("<m:limUpp>"));
+        assert!(body("\\underbrace{E} dE").contains("<m:bar>"));
     }
 
     #[test]
