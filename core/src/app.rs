@@ -329,6 +329,27 @@ pub fn flagged(doc: &Document) -> usize {
         .count()
 }
 
+/// Removes headers and footers that repeat word for word on at least 3 pages and half the
+/// document: scanner watermarks ("Scanned with CamScanner") and running heads, not notes.
+pub fn drop_repeated_margins(doc: &mut Document) {
+    let key = |b: &crate::document::Block| {
+        matches!(b.label.as_deref(), Some("header" | "footer"))
+            .then(|| b.text.as_deref().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase())
+            .filter(|t| !t.is_empty())
+    };
+    let mut seen = std::collections::HashMap::<String, usize>::new();
+    for p in &doc.pages {
+        let on_page: std::collections::HashSet<String> = p.blocks.iter().filter_map(key).collect();
+        for t in on_page {
+            *seen.entry(t).or_default() += 1;
+        }
+    }
+    let pages = doc.pages.len();
+    for p in &mut doc.pages {
+        p.blocks.retain(|b| key(b).is_none_or(|t| seen[&t] < 3 || 2 * seen[&t] < pages));
+    }
+}
+
 fn assemble_and_export(
     c: &ConvertOptions,
     queue: &Queue,
@@ -351,6 +372,7 @@ fn assemble_and_export(
             failed.push(job.path);
         }
     }
+    drop_repeated_margins(&mut doc);
     if let Some(note) = write_exports(&mut doc, &c.out, &c.name, &c.formats, c.tectonic.as_deref())?
     {
         progress(Progress::Status { message: note });
@@ -363,4 +385,34 @@ fn assemble_and_export(
         failed,
     });
     Ok(json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drops_watermarks_but_keeps_page_numbers_and_notes() {
+        let page = |i: usize| {
+            serde_json::json!({"index": i, "width": 10, "height": 10, "blocks": [
+                {"id": "a", "type": "text", "label": "text", "bbox": [0, 0, 1, 1], "order": 0, "text": "Scanned with CamScanner"},
+                {"id": "b", "type": "text", "label": "footer", "bbox": [0, 0, 1, 1], "order": 1, "text": "Scanned  with CamScanner"},
+                {"id": "c", "type": "text", "label": "footer", "bbox": [0, 0, 1, 1], "order": 2, "text": format!("{i}")},
+            ]})
+        };
+        let mut doc: Document = serde_json::from_value(serde_json::json!({
+            "version": 1, "id": "n", "pages": (0..4).map(page).collect::<Vec<_>>()
+        }))
+        .unwrap();
+        drop_repeated_margins(&mut doc);
+        let ids: Vec<&str> = doc.pages[0].blocks.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(ids, ["a", "c"]);
+        // two pages are too few to tell a watermark from a heading
+        doc.pages.truncate(2);
+        for p in &mut doc.pages {
+            p.blocks = serde_json::from_value(page(0)["blocks"].clone()).unwrap();
+        }
+        drop_repeated_margins(&mut doc);
+        assert_eq!(doc.pages[1].blocks.len(), 3);
+    }
 }

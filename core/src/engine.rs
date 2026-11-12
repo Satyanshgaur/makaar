@@ -169,6 +169,45 @@ pub fn runaway(text: &str, min_run: usize) -> bool {
     (1..=200.min(n / 4)).any(|unit| {
         let run = (unit..n).rev().take_while(|&i| c[i] == c[i - unit]).count() + unit;
         run >= min_run.max(4 * unit)
+    }) || counting_loop(text, min_run).is_some()
+}
+
+/// The model counting instead of transcribing: `text` ends in one unit repeated at least 8 times
+/// over at least `min_run` characters where only a number changes, mostly going up by one
+/// (`L_{1} L_{2} L_{3} …`). Returns the character index just after the loop's first unit.
+pub fn counting_loop(text: &str, min_run: usize) -> Option<usize> {
+    // Digit runs become one placeholder; `at` maps each placeholder char back to `text`.
+    let (mut norm, mut at, mut nums) = (vec![], vec![], vec![]);
+    let mut chars = text.chars().enumerate().peekable();
+    while let Some((i, ch)) = chars.next() {
+        at.push(i);
+        if ch.is_ascii_digit() {
+            let mut v = u64::from(ch as u8 - b'0');
+            while let Some((_, d)) = chars.next_if(|(_, d)| d.is_ascii_digit()) {
+                v = v.saturating_mul(10).saturating_add(u64::from(d as u8 - b'0'));
+            }
+            nums.push((norm.len(), v));
+            norm.push('\0');
+        } else {
+            norm.push(ch);
+        }
+    }
+    let n = norm.len();
+    // A number at the very end may still be streaming in.
+    if text.ends_with(|c: char| c.is_ascii_digit()) {
+        nums.pop();
+    }
+    (2..=200.min(n / 8)).find_map(|unit| {
+        if norm[n - unit..].iter().filter(|&&c| c == '\0').count() != 1 {
+            return None;
+        }
+        let run = (unit..n).rev().take_while(|&i| norm[i] == norm[i - unit]).count();
+        let first = n - run - unit; // where the periodic tail's first unit starts
+        let tail: Vec<u64> = nums.iter().filter(|(p, _)| *p >= first).map(|&(_, v)| v).collect();
+        let ups = tail.windows(2).filter(|w| w[0] + 1 == w[1]).count();
+        // Mostly +1 steps: the model may restart the count (`L_{99} L_{10} L_{11}`).
+        (tail.len() >= 8 && 4 * ups >= 3 * (tail.len() - 1) && n - first >= min_run)
+            .then(|| at[first + unit])
     })
 }
 
@@ -264,5 +303,23 @@ mod tests {
         // ordinary text, or a short legitimate repeat, runs to the end
         assert!(!runaway("0 & 0 & 0 & 0 \\\\ 1 & 0 & 0 & 0", RUNAWAY_CHARS));
         assert!(runaway(&"ab".repeat(150), RUNAWAY_CHARS));
+    }
+
+    #[test]
+    fn stops_a_counting_stream_early() {
+        let mut chunks = vec![json!({"choices": [{"delta": {"content": "w = \\pi n_i\n\n"}}]})];
+        for k in 1..300 {
+            chunks.push(json!({"choices": [{"delta": {"content": format!("\\( L_{{{k}}} \\)\n\n")}}]}));
+        }
+        let r = parse_stream(sse(&chunks), "p").unwrap();
+        assert!(r.truncated);
+        assert!(r.text.len() < 400, "stopped after {} chars", r.text.len());
+        // a short numbered list, or a table of numbers, is not a loop
+        let list: String = (1..12).map(|k| format!("{k}. item\n")).collect();
+        assert!(!runaway(&list, RUNAWAY_CHARS));
+        let table: String = (0..40).map(|k| format!("{} & {} \\\\\n", k * 7 % 10, k)).collect();
+        assert!(counting_loop(&table, RUNAWAY_CHARS).is_none());
+        let rows: String = (1..40).map(|k| format!("{k} & 0.5 \\\\\n")).collect();
+        assert!(counting_loop(&rows, RUNAWAY_CHARS).is_none());
     }
 }
