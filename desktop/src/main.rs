@@ -25,6 +25,8 @@ struct Status {
     missing: Vec<&'static str>,
     llama_server: Option<String>,
     download_mb: u64,
+    /// The optional handwriting adapter is installed.
+    adapter: bool,
 }
 
 #[tauri::command]
@@ -39,6 +41,7 @@ fn status() -> Status {
             + if server.is_none() { runtime_mb } else { 0 },
         missing: missing.iter().map(|m| m.dest).collect(),
         llama_server: server.map(|p| p.display().to_string()),
+        adapter: models::handwriting_adapter(&dir).is_some(),
     }
 }
 
@@ -84,6 +87,22 @@ async fn setup(app: AppHandle) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         }
         Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Downloads the optional handwriting adapter (CC BY-NC-SA 4.0), emitting `adapter` progress events.
+#[tauri::command]
+async fn get_adapter(app: AppHandle) -> Result<(), String> {
+    let busy = Busy::take()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _busy = busy;
+        let m = models::HANDWRITING_ADAPTER_FILE;
+        m.download(&models::default_dir(), |done, total| {
+            let _ = app.emit("adapter", SetupProgress { item: m.dest.into(), done, total });
+        })
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -206,6 +225,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             status,
             setup,
+            get_adapter,
             launch_inputs,
             pick_inputs,
             pick_output,

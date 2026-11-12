@@ -17,6 +17,8 @@ core/target/release/makaar review out/notes.json      # fix flagged blocks in th
 
 `setup --handwriting-adapter` also fetches the optional handwriting adapter ([satyansh0/makaar-handwriting-lora](https://huggingface.co/satyansh0/makaar-handwriting-lora), 48 MB). It reads handwritten maths better, but it is CC BY-NC-SA 4.0 (free, non-commercial use only; see `DATASETS.md`), and on a CPU it roughly doubles the time spent on handwritten blocks. For handwritten notes, `convert --handwritten` reads each block once with the adapter: better handwritten maths at normal speed, but printed maths can come out restyled.
 
+Beta testers: see `docs/BETA.md`. `convert` ends with a `speed:` line (median s/page, CPU, RAM, mode) to paste into a report.
+
 ## Desktop app
 
 `desktop/` is a Tauri window over the same core: pick pages (images or PDFs), convert, review. Build installers with `cd desktop && cargo tauri build` (Linux needs `webkit2gtk4.1-devel`), or take them from the release workflow.
