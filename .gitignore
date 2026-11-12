@@ -8,3 +8,7 @@ eval/preds/
 datasets/
 desktop/target/
 desktop/gen/
+
+# Local only: the original 10-page eval set and personal test files
+eval/data/
+assets/
