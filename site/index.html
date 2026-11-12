@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>makaar · offline OCR for handwritten notes</title>
+<meta name="description" content="Photos of handwritten or printed notes in; Markdown, LaTeX and Word out, with real equations. Runs on your laptop. Nothing is uploaded.">
+<meta property="og:title" content="makaar · offline OCR for handwritten notes">
+<meta property="og:description" content="Handwritten notes to clean LaTeX, Markdown and Word. Runs on your laptop. Nothing is uploaded.">
+<meta property="og:image" content="/img/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 29 27H3Z' fill='%238052ff'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;400;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --void: #000000;
+    --bone: #ffffff;
+    --ash: #9a9a9a;
+    --mist: #bdbdbd;
+    --iris: #8052ff;
+    --saffron: #ffb829;
+    --verdant: #15846e;
+    --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+    --gutter: clamp(16px, 5vw, 60px);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { background: var(--void); scroll-behavior: smooth; }
+  body {
+    background: var(--void); color: var(--bone); font-family: var(--font);
+    font-feature-settings: "ss01" on, "cv11" on; -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  a { color: inherit; }
+  img { display: block; max-width: 100%; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 var(--gutter); }
+
+  /* Nav */
+  nav { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 24px 0; gap: 18px; }
+  .logo { display: flex; align-items: center; gap: 12px; text-decoration: none; font-size: 20px; font-weight: 400; letter-spacing: -0.4px; }
+  .logo svg { width: 26px; height: 26px; }
+  .links { display: flex; align-items: center; gap: 30px; }
+  .links a.ghost { color: var(--ash); text-decoration: none; font-size: 14px; font-weight: 600; letter-spacing: 0.35px; text-transform: uppercase; transition: color .15s; }
+  .links a.ghost:hover { color: var(--bone); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 10px; background: var(--iris); color: var(--bone); text-decoration: none;
+    font-size: 14px; font-weight: 600; letter-spacing: 0.35px; text-transform: uppercase;
+    padding: 14px 22px; border-radius: 24px; transition: filter .15s, transform .15s; white-space: nowrap;
+  }
+  .pill:hover { filter: brightness(1.12); transform: translateY(-1px); }
+  .pill:focus-visible, a:focus-visible { outline: 2px solid var(--saffron); outline-offset: 3px; }
+
+  /* Type */
+  .label { color: var(--saffron); font-size: 14px; font-weight: 600; letter-spacing: 0.35px; text-transform: uppercase; }
+  .display { white-space: nowrap; font-size: clamp(44px, 7.6vw, 108px); font-weight: 400; line-height: 0.98; letter-spacing: -0.04em; }
+  .h-lg { font-size: clamp(42px, 6vw, 78px); font-weight: 400; line-height: 1.05; letter-spacing: -0.04em; }
+  .h-sm { font-size: clamp(30px, 3.4vw, 42px); font-weight: 400; line-height: 1.15; letter-spacing: -0.04em; }
+  .body { font-size: 18px; font-weight: 200; line-height: 1.55; color: var(--bone); max-width: 520px; }
+  .body.quiet { color: var(--mist); }
+  .body b { font-weight: 400; }
+  .ghostlink { color: var(--ash); font-size: 15px; text-decoration: underline; text-underline-offset: 4px; text-decoration-color: rgba(154,154,154,.4); }
+  .ghostlink:hover { color: var(--bone); }
+  .amber { color: var(--saffron); }
+
+  /* Hero */
+  .hero { position: relative; min-height: min(820px, 92svh); display: grid; align-items: center; padding-bottom: 60px; }
+  .hero .copy { position: relative; z-index: 2; display: grid; gap: 30px; padding-top: 24px; }
+  .hero .cta { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+  .hero .note { color: var(--ash); font-size: 13px; font-weight: 400; }
+  #field { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
+
+  /* Sections */
+  section { padding: clamp(60px, 10vw, 120px) 0; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(36px, 6vw, 96px); align-items: center; }
+  .split.flip > :first-child { order: 2; }
+  .stack { display: grid; gap: 24px; align-content: start; }
+
+  .paper { border-radius: 24px; overflow: hidden; transform: rotate(-1.6deg); }
+  .code { font-family: var(--mono); font-size: 14px; line-height: 1.65; color: #e6e6e6; white-space: pre; overflow-x: auto; padding: 6px 0; }
+  .code .c { color: #c4a8ff; } .code .b { color: var(--mist); } .code .n { color: var(--saffron); } .code .t { color: #5fd3b5; }
+  .arrow { color: var(--ash); font-size: 13px; letter-spacing: .35px; text-transform: uppercase; font-weight: 600; display: flex; align-items: center; gap: 12px; }
+  .arrow::before { content: ""; width: 48px; height: 1px; background: var(--ash); }
+
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(24px, 4vw, 60px); margin-top: 60px; }
+  .step .num { font-size: clamp(60px, 7vw, 96px); font-weight: 200; letter-spacing: -0.04em; line-height: 1; color: var(--iris); }
+  .step h3 { font-size: 24px; font-weight: 400; letter-spacing: -0.48px; margin: 18px 0 12px; }
+  .media { border-radius: 24px; overflow: hidden; margin: 60px auto 0; max-width: 880px; }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(24px, 4vw, 60px); margin-top: 60px; }
+  .stat .big { font-size: clamp(48px, 6vw, 78px); font-weight: 400; letter-spacing: -0.04em; line-height: 1; }
+    .stat p { margin-top: 18px; }
+  .fine { color: var(--ash); font-size: 13px; line-height: 1.6; margin-top: 36px; max-width: 760px; }
+
+  .dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(24px, 4vw, 60px); margin-top: 60px; }
+  .os h3 { font-size: 27px; font-weight: 400; letter-spacing: -0.5px; }
+  .os .files { display: grid; gap: 10px; margin: 18px 0; }
+  .os .files a { font-size: 16px; font-weight: 400; color: var(--saffron); text-decoration: none; display: flex; justify-content: space-between; gap: 12px; }
+  .os .files a:hover { text-decoration: underline; text-underline-offset: 4px; }
+  .os .files a span { color: var(--ash); font-weight: 200; }
+  .os p { font-size: 15px; font-weight: 200; line-height: 1.55; color: var(--mist); }
+  .os code { font-family: var(--mono); font-size: 13px; color: var(--bone); }
+
+  footer { padding: 60px 0 48px; color: var(--ash); font-size: 14px; display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  footer a { color: var(--ash); }
+  footer a:hover { color: var(--bone); }
+
+  @media (max-width: 900px) {
+    .hero { grid-template-columns: 1fr; min-height: auto; padding-top: 12px; }
+    .hero .copy { padding-top: 0; }
+    #field { opacity: .28; }
+    .code { font-size: 12px; }
+    .split, .steps, .stats, .dl { grid-template-columns: 1fr; }
+    .split.flip > :first-child { order: 0; }
+    .links a.ghost { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav aria-label="Main">
+    <a class="logo" href="#top" aria-label="makaar home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8052ff"/><stop offset="1" stop-color="#15846e"/></linearGradient></defs><path d="M16 3 29 27H3Z" fill="url(#lg)"/><path d="M16 12 22 23H10Z" fill="#000"/></svg>
+      makaar
+    </a>
+    <div class="links">
+      <a class="ghost" href="#how">How it works</a>
+      <a class="ghost" href="#accuracy">Accuracy</a>
+      <a class="ghost" href="https://github.com/Satyanshgaur/makaar">GitHub</a>
+      <a class="pill" href="#download">Download</a>
+    </div>
+  </nav>
+
+  <header class="hero" id="top">
+    <canvas id="field" aria-hidden="true"></canvas>
+    <div class="copy">
+      <p class="label">Offline OCR</p>
+      <h1 class="display">Handwriting in.<br>LaTeX out.</h1>
+      <p class="body">makaar turns photos of your notes, handwritten or printed, into <b>Markdown, LaTeX and Word with real equations</b>. It runs on your laptop. Nothing is uploaded.</p>
+      <div class="cta">
+        <a class="pill" id="heroDl" href="#download">Download</a>
+        <a class="ghostlink" href="#download">Other platforms</a>
+      </div>
+      <p class="note">Free and open source · Windows, macOS, Linux · <span id="ver">v0.1.0</span></p>
+    </div>
+  </header>
+</div>
+
+<section id="how">
+  <div class="wrap split">
+    <div class="stack">
+      <figure class="paper"><img src="img/handwriting-sample.jpg" width="900" height="214" alt="Three handwritten lines: a sentence and two equations about the total energy of molecules"></figure>
+      <p class="arrow">makaar writes</p>
+      <div class="code" aria-label="LaTeX output">(b) Total energy of molecule is const.
+
+<span class="c">\[</span>
+E = n<span class="b">_{</span><span class="n">1</span><span class="b">}</span>E<span class="b">_{</span><span class="n">1</span><span class="b">}</span> + n<span class="b">_{</span><span class="n">2</span><span class="b">}</span>E<span class="b">_{</span><span class="n">2</span><span class="b">}</span> + n<span class="b">_{</span><span class="n">3</span><span class="b">}</span>E<span class="b">_{</span><span class="n">3</span><span class="b">}</span>
+  + <span class="c">\cdots</span> + n<span class="b">_{</span>i<span class="b">}</span> E<span class="b">_{</span>i<span class="b">}</span> = <span class="c">\text</span><span class="b">{</span><span class="t">constant</span><span class="b">}</span>.
+<span class="c">\]</span></div>
+    </div>
+    <div class="stack">
+      <p class="label">Unedited output</p>
+      <h2 class="h-lg">Your notebook, typed.</h2>
+      <p class="body quiet">Take a photo or scan a PDF. makaar finds every block on the page, reads it, and writes the equations as real LaTeX, so they compile, and as native Word equations you can edit.</p>
+      <p class="body quiet">Anything it is unsure of is marked for a quick check, so nothing changes silently.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="label">Three steps</p>
+    <h2 class="h-lg" style="margin-top:18px">Works in three steps.</h2>
+    <div class="steps">
+      <div class="step"><div class="num">01</div><h3>Choose your pages</h3><p class="body quiet">Images, PDFs or a whole folder. Tick <span class="amber">Handwritten notes</span> for handwriting: more accurate, no slower.</p></div>
+      <div class="step"><div class="num">02</div><h3>Convert</h3><p class="body quiet">Each page appears as it is read. You get <code style="font-family:var(--mono);font-size:15px">notes.md</code>, <code style="font-family:var(--mono);font-size:15px">.tex</code> and <code style="font-family:var(--mono);font-size:15px">.docx</code>.</p></div>
+      <div class="step"><div class="num">03</div><h3>Review</h3><p class="body quiet">See the scan beside what was read. Fix the red boxes, save, and every file updates.</p></div>
+    </div>
+    <div class="media"><img src="img/demo.gif" width="1200" height="760" loading="lazy" alt="A handwritten page: blocks are found, uncertain ones marked red, then shown beside the Word document with real equations"></div>
+  </div>
+</section>
+
+<section id="accuracy">
+  <div class="wrap">
+    <div class="split">
+      <div class="stack">
+        <p class="label">Measured, not claimed</p>
+        <h2 class="h-lg">Beats Gemini on print. On your laptop.</h2>
+      </div>
+      <p class="body quiet">We test against Gemini on public benchmarks and publish every number, including where we lose.</p>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="big">37%</div><p class="body quiet">fewer errors on printed pages than Gemini 3.5 Flash-Lite: error rate 0.130 vs 0.207 on 126 OmniDocBench pages.</p></div>
+      <div class="stat"><div class="big">Level</div><p class="body quiet">with Gemini 3.5 Flash on handwritten maths: 0.203 vs 0.225 on 30 CROHME expressions.</p></div>
+      <div class="stat"><div class="big">Behind</div><p class="body quiet">on handwritten prose: 0.079 vs Gemini's 0.029 on 30 IAM lines. We're working on it.</p></div>
+    </div>
+    <p class="fine">Error rate is normalised edit distance, the share of characters you would have to fix; lower is better. Speed: about 7 seconds a page with an NVIDIA GPU from the command line, 1–2 minutes on a laptop CPU. The desktop app uses the CPU for now. Full method and tables: <a href="https://github.com/Satyanshgaur/makaar/blob/main/docs/RESULTS.md">RESULTS.md</a>.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap split flip">
+    <div class="paper" style="transform:none"><img src="img/app-review.png" width="1300" height="850" loading="lazy" alt="The review screen: the scan with red and blue boxes beside the recognised text and equations"></div>
+    <div class="stack">
+      <p class="label">Private by design</p>
+      <h2 class="h-lg">Works with Wi&#8209;Fi off.</h2>
+      <p class="body quiet">Exam papers, lab notebooks and medical notes never leave your computer. After a one-time model download, makaar needs no internet, no account and no API key.</p>
+    </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <p class="label">Download</p>
+    <h2 class="h-lg" style="margin-top:18px">Free. Open source.</h2>
+    <div class="dl">
+      <div class="os" data-os="windows">
+        <h3>Windows</h3>
+        <div class="files"><a data-asset="_x64-setup.exe" href="https://github.com/Satyanshgaur/makaar/releases/latest">Installer (.exe) <span>Windows 10/11</span></a></div>
+        <p>Windows will say <i>the publisher could not be verified</i>; click <b>Run</b>. Or, on a blue screen, <b>More info → Run anyway</b>. We're working on signing.</p>
+      </div>
+      <div class="os" data-os="mac">
+        <h3>macOS</h3>
+        <div class="files"><a data-asset="_aarch64.dmg" href="https://github.com/Satyanshgaur/makaar/releases/latest">Disk image (.dmg) <span>Apple silicon</span></a></div>
+        <p>Drag makaar to Applications. The first time, right-click it and choose <b>Open</b>.</p>
+      </div>
+      <div class="os" data-os="linux">
+        <h3>Linux</h3>
+        <div class="files">
+          <a data-asset="_amd64.AppImage" href="https://github.com/Satyanshgaur/makaar/releases/latest">AppImage <span>any distribution</span></a>
+          <a data-asset="_amd64.deb" href="https://github.com/Satyanshgaur/makaar/releases/latest">.deb <span>Debian, Ubuntu</span></a>
+        </div>
+        <p>Run <code>chmod +x</code> on the AppImage and start it, or <code>sudo apt install ./makaar_*.deb</code>.</p>
+      </div>
+    </div>
+    <p class="fine">The first start downloads the reading models: about 1.9 GB, once, checked with SHA-256. The command-line version and all files are on <a href="https://github.com/Satyanshgaur/makaar/releases/latest">GitHub Releases</a>.</p>
+  </div>
+</section>
+
+<div class="wrap">
+  <footer>
+    <span>makaar · Apache 2.0 · the optional handwriting add-on is CC BY-NC-SA 4.0 (non-commercial)</span>
+    <span><a href="https://github.com/Satyanshgaur/makaar">GitHub</a> · <a href="https://github.com/Satyanshgaur/makaar/issues">Report a problem</a></span>
+  </footer>
+</div>
+
+<script>
+// Download links: the latest GitHub release, so the site never needs editing for a new version.
+(async () => {
+  const ua = navigator.userAgent;
+  const os = /Windows/.test(ua) ? "windows" : /Mac/.test(ua) ? "mac" : /Linux|X11/.test(ua) && !/Android/.test(ua) ? "linux" : null;
+  const label = { windows: "Download for Windows", mac: "Download for macOS", linux: "Download for Linux" };
+  let assets = [];
+  try {
+    const r = await fetch("https://api.github.com/repos/Satyanshgaur/makaar/releases/latest");
+    if (r.ok) {
+      const rel = await r.json();
+      assets = rel.assets || [];
+      document.getElementById("ver").textContent = rel.tag_name;
+    }
+  } catch (_) { /* offline or rate-limited: links fall back to the releases page */ }
+  for (const a of document.querySelectorAll("[data-asset]")) {
+    const hit = assets.find((x) => x.name.endsWith(a.dataset.asset));
+    if (hit) a.href = hit.browser_download_url;
+  }
+  if (os) {
+    const first = document.querySelector(`.os[data-os="${os}"] [data-asset]`);
+    const hero = document.getElementById("heroDl");
+    hero.textContent = label[os];
+    if (first && first.href.includes("/download/")) hero.href = first.href;
+  }
+})();
+
+// Hero: a constellation of small outlined triangles forming an integral sign, drifting.
+(() => {
+  const cv = document.getElementById("field");
+  const ctx = cv.getContext("2d");
+  const colors = ["#8052ff", "#ffb829", "#1fbf9f", "#e55cff", "#4d8dff", "#a98bff"];
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let parts = [], W = 0, H = 0, dpr = 1, mouse = { x: -1e4, y: -1e4 };
+
+  function sample(w, h) {
+    // Draw the glyph offscreen and keep points that land on ink.
+    const off = document.createElement("canvas");
+    const s = Math.min(w * 0.4, h * 0.88);
+    off.width = Math.ceil(s * 0.75); off.height = Math.ceil(s);
+    const o = off.getContext("2d");
+    o.fillStyle = "#fff"; o.textAlign = "center"; o.textBaseline = "middle";
+    o.font = `italic 400 ${s}px "Times New Roman", Georgia, serif`;
+    o.fillText("∫", off.width / 2, off.height * 0.52);
+    const data = o.getImageData(0, 0, off.width, off.height).data;
+    const pts = [];
+    for (let tries = 0; pts.length < 1100 && tries < 200000; tries++) {
+      const x = Math.random() * off.width, y = Math.random() * off.height;
+      if (data[(((y | 0) * off.width) + (x | 0)) * 4 + 3] > 128) pts.push([x, y]);
+    }
+    const ox = w > 900 ? w * 0.8 - off.width / 2 : w * 0.5 - off.width / 2;
+    const oy = h / 2 - off.height / 2;
+    return pts.map(([x, y]) => [x + ox, y + oy]);
+  }
+
+  function build() {
+    dpr = Math.min(devicePixelRatio || 1, 2);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const home = sample(W, H);
+    parts = home.map(([x, y]) => ({ hx: x, hy: y, x: x + (Math.random() - .5) * 60, y: y + (Math.random() - .5) * 60,
+      r: 2 + Math.random() * 3.2, a: Math.random() * 6.28, spin: (Math.random() - .5) * .02, ph: Math.random() * 6.28,
+      c: colors[(Math.random() * colors.length) | 0], o: .55 + Math.random() * .45 }));
+    for (let i = 0; i < 140; i++) {
+      const x = Math.random() * W, y = Math.random() * H;
+      parts.push({ hx: x, hy: y, x, y, r: 1.5 + Math.random() * 2, a: Math.random() * 6.28, spin: (Math.random() - .5) * .01,
+        ph: Math.random() * 6.28, c: colors[(Math.random() * colors.length) | 0], o: .18 + Math.random() * .2, amb: true });
+    }
+    if (still) parts.forEach((p) => { p.x = p.hx; p.y = p.hy; });
+  }
+
+  function tri(p) {
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.a);
+    ctx.beginPath(); ctx.moveTo(0, -p.r); ctx.lineTo(p.r * .87, p.r * .5); ctx.lineTo(-p.r * .87, p.r * .5); ctx.closePath();
+    ctx.strokeStyle = p.c; ctx.globalAlpha = p.o; ctx.lineWidth = 1.1; ctx.stroke(); ctx.restore();
+  }
+
+  function frame(t) {
+    ctx.clearRect(0, 0, W, H);
+    for (const p of parts) {
+      if (!still) {
+        const wob = p.amb ? 18 : 3.5;
+        const tx = p.hx + Math.cos(t / 2400 + p.ph) * wob, ty = p.hy + Math.sin(t / 2000 + p.ph) * wob;
+        p.x += (tx - p.x) * .035; p.y += (ty - p.y) * .035;
+        const dx = p.x - mouse.x, dy = p.y - mouse.y, d2 = dx * dx + dy * dy;
+        if (d2 < 9000) { const f = (9000 - d2) / 9000 * 4; p.x += dx / 30 * f; p.y += dy / 30 * f; }
+        p.a += p.spin;
+      }
+      tri(p);
+    }
+    if (!still) requestAnimationFrame(frame);
+  }
+
+  addEventListener("pointermove", (e) => { const r = cv.getBoundingClientRect(); mouse = { x: e.clientX - r.left, y: e.clientY - r.top }; });
+  addEventListener("resize", () => { clearTimeout(build.t); build.t = setTimeout(build, 150); });
+  build(); frame(0);
+  document.fonts.ready.then(build);
+})();
+</script>
+</body>
+</html>
