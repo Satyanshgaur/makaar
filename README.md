@@ -1,12 +1,29 @@
-# makaar
-
-![A photo of handwritten physics notes becomes a Word document with real equations](docs/img/demo.gif)
+![makaar, offline OCR: a photo of handwritten equations becomes clean LaTeX](docs/img/hero.png)
 
 **Photos of your notes in; Markdown, LaTeX and Word out, with real equations. It runs on your own computer, so nothing is uploaded.**
 
 Handwritten or printed pages and PDFs all work. Blocks the model is unsure of are marked in red so you can check them.
 
 [**Download for Windows**](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_x64-setup.exe) · [**Linux**](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_amd64.AppImage) · [**macOS (Apple silicon)**](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_aarch64.dmg) · [all files](https://github.com/Satyanshgaur/makaar/releases/latest)
+
+## Works in 3 easy steps
+
+After [installing](#install), it goes like this:
+
+![A photo of handwritten physics notes becomes a Word document with real equations](docs/img/demo.gif)
+
+
+**1. Choose your pages.** Images or PDFs, or a whole folder. **If they are handwritten, tick _Handwritten notes_**: it is more accurate on handwriting and no slower. The first time, it downloads a 48 MB add-on. Leave it off for printed pages.
+
+![The makaar window with a PDF chosen and the Handwritten notes checkbox highlighted](docs/img/app-handwritten-checkbox.png)
+
+**2. Convert.** Each page shows up as it is done. The output folder gets `notes.md`, `notes.tex` (and a PDF if [Tectonic](https://tectonic-typesetting.github.io) is installed), `notes.docx` and `notes.json`.
+
+![The makaar window after converting 26 pages, with Review flagged blocks and Open output folder buttons](docs/img/app-converted.png)
+
+**3. Review.** *Review flagged blocks* shows the scan beside what was read. Red boxes are worth a look; equations preview as they will appear in Word. Fix what's wrong, then press *Save & export* to rewrite every file.
+
+![The review screen: the scanned page with red and blue boxes on the left, the recognised text and equations on the right](docs/img/app-review.png)
 
 ## Handwriting in, clean Markdown out
 
@@ -88,20 +105,6 @@ The installers are not code-signed yet, so your system will warn you the first t
 2. The first time, right-click makaar and choose **Open**. Alternatively, go to *System Settings → Privacy & Security* and click **Open Anyway**.
 
 **First start:** makaar asks to download its reading models: about 1.9 GB, once, checked with SHA-256. After that it works offline.
-
-## Use it
-
-**1. Choose your pages.** Images or PDFs, or a whole folder. **If they are handwritten, tick _Handwritten notes_**: it is more accurate on handwriting and no slower. The first time, it downloads a 48 MB add-on. Leave it off for printed pages.
-
-![The makaar window with a PDF chosen and the Handwritten notes checkbox highlighted](docs/img/app-handwritten-checkbox.png)
-
-**2. Convert.** Each page shows up as it is done. The output folder gets `notes.md`, `notes.tex` (and a PDF if [Tectonic](https://tectonic-typesetting.github.io) is installed), `notes.docx` and `notes.json`.
-
-![The makaar window after converting 26 pages, with Review flagged blocks and Open output folder buttons](docs/img/app-converted.png)
-
-**3. Review.** *Review flagged blocks* shows the scan beside what was read. Red boxes are worth a look; equations preview as they will appear in Word. Fix what's wrong, then press *Save & export* to rewrite every file.
-
-![The review screen: the scanned page with red and blue boxes on the left, the recognised text and equations on the right](docs/img/app-review.png)
 
 ## Command line
 
