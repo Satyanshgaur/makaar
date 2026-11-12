@@ -184,8 +184,10 @@ async fn convert(app: AppHandle, inputs: Vec<String>, out: String, formats: Vec<
 }
 
 /// Opens the review screen for `json` in a new window; saving re-exports the formats beside it.
+/// Async on purpose: on Windows, building a window from a synchronous command deadlocks WebView2
+/// (a blank window that can't be closed).
 #[tauri::command]
-fn open_review(app: AppHandle, json: String) -> Result<(), String> {
+async fn open_review(app: AppHandle, json: String) -> Result<(), String> {
     let path = PathBuf::from(&json);
     let doc: Document = serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
