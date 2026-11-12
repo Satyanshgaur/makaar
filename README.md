@@ -64,8 +64,15 @@ The installers are not code-signed yet, so your system will warn you the first t
 
 **Windows 10/11**
 1. Download [`makaar_0.1.0_x64-setup.exe`](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_x64-setup.exe) and open it.
-2. If "Windows protected your PC" appears, click **More info**, then **Run anyway**.
-3. Finish the installer and start makaar from the Start menu.
+2. Windows says *The publisher could not be verified*. Click **Run**. If you see a blue "Windows protected your PC" screen instead, click **More info**, then **Run anyway**.
+
+   <img src="docs/img/win-1-security-warning.png" width="380" alt="Open File - Security Warning: The publisher could not be verified. Publisher: Unknown Publisher. Run and Cancel buttons.">
+3. Keep the suggested folder and click **Next**. makaar installs for your user only, so it doesn't need administrator rights.
+
+   <img src="docs/img/win-2-install-location.png" width="380" alt="makaar Setup: Choose Install Location, space required 43.3 MB, with Next button">
+4. Click **Finish** with *Run makaar* ticked. There is also a desktop shortcut.
+
+   <img src="docs/img/win-3-finish.png" width="380" alt="Completing makaar Setup, with Run makaar and Create desktop shortcut ticked, and a Finish button">
 
 **Linux** (x64)
 - AppImage, any distribution: download [`makaar_0.1.0_amd64.AppImage`](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_amd64.AppImage), then
