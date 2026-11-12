@@ -155,7 +155,27 @@ fn main() {
             c.no_specialist = no_specialist;
             c.no_adapter = no_handwriting_adapter;
             c.handwritten = handwritten;
-            app::convert(&c, &mut print_progress).map(|_| ())
+            let mut secs = Vec::new();
+            let res = app::convert(&c, &mut |p: Progress| {
+                if let Progress::Page { seconds, .. } = &p {
+                    secs.push(*seconds);
+                }
+                print_progress(p)
+            });
+            if res.is_ok() && !secs.is_empty() {
+                // one line to paste into a speed report (gate 2)
+                eprintln!(
+                    "speed: median {:.0} s/page over {} page(s); {}; {} threads, GPU layers {}, {} mode, adapter {}",
+                    median(&mut secs),
+                    secs.len(),
+                    machine(),
+                    c.threads,
+                    c.gpu_layers.map_or("auto".into(), |n| n.to_string()),
+                    if c.handwritten { "handwritten" } else { "default" },
+                    if c.no_adapter || models::handwriting_adapter(&c.models).is_none() { "off" } else { "on" },
+                );
+            }
+            res.map(|_| ())
         }
     };
     if let Err(e) = res {
@@ -264,6 +284,43 @@ fn model_state(
     } else {
         "present"
     })
+}
+
+fn median(v: &mut [f64]) -> f64 {
+    v.sort_by(|a, b| a.total_cmp(b));
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    }
+}
+
+/// CPU model and RAM, as far as the OS tells us without extra dependencies.
+fn machine() -> String {
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    let field = |text: &str, key: &str| {
+        text.lines()
+            .find(|l| l.starts_with(key))
+            .and_then(|l| l.split(':').nth(1))
+            .map(|v| v.trim().to_string())
+    };
+    let cpu = field(&read("/proc/cpuinfo"), "model name")
+        .or_else(|| std::env::var("PROCESSOR_IDENTIFIER").ok())
+        .or_else(|| {
+            std::process::Command::new("sysctl")
+                .args(["-n", "machdep.cpu.brand_string"])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "unknown CPU".into());
+    let cores = std::thread::available_parallelism().map_or(0, |n| n.get());
+    let ram = field(&read("/proc/meminfo"), "MemTotal")
+        .and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok())
+        .map_or("RAM unknown".into(), |kb| format!("{:.0} GB RAM", kb as f64 / 1048576.0));
+    format!("{cpu} ({cores} logical cores), {ram}")
 }
 
 fn print_progress(p: Progress) {

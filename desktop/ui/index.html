@@ -58,6 +58,10 @@
       <label title="Use the graphics card if llama.cpp can"><input type="checkbox" id="gpu" checked> Use GPU</label>
       <label title="Read every block once with the handwriting adapter, if installed: better handwritten maths at normal speed, but printed maths may be restyled"><input type="checkbox" id="handwritten"> Handwritten notes</label>
     </div>
+    <div class="row hidden" id="adapterRow" style="margin-top:8px">
+      <button id="adapterBtn">Get the handwriting adapter (48 MB)</button>
+      <span class="muted" id="adapterState">Reads handwritten maths better. Free for non-commercial use (CC BY-NC-SA 4.0).</span>
+    </div>
   </section>
 
   <section>
@@ -95,6 +99,7 @@ async function checkStatus() {
   const s = await invoke("status");
   ready = s.missing.length === 0 && !!s.llama_server;
   $("setup").classList.toggle("hidden", ready);
+  $("adapterRow").classList.toggle("hidden", s.adapter);
   $("setupText").textContent = `makaar needs its reading models (${s.download_mb} MB, downloaded once into ${s.models_dir} and checked).`;
   refresh();
 }
@@ -114,6 +119,12 @@ $("setupBtn").onclick = async () => {
   try { await invoke("setup"); $("setupItem").textContent = "done"; } catch (e) { $("setupItem").textContent = "failed: " + e; $("setupItem").className = "bad"; }
   $("setupBtn").disabled = false; checkStatus();
 };
+$("adapterBtn").onclick = async () => {
+  $("adapterBtn").disabled = true;
+  try { await invoke("get_adapter"); } catch (e) { $("adapterState").textContent = "failed: " + e; $("adapterState").className = "bad"; }
+  $("adapterBtn").disabled = false; checkStatus();
+};
+listen("adapter", (e) => { $("adapterState").textContent = `${e.payload.done >> 20} / ${e.payload.total >> 20} MB`; });
 listen("setup", (e) => {
   const p = e.payload; $("setupBar").max = p.total; $("setupBar").value = p.done;
   $("setupItem").textContent = `${p.item}: ${p.done >> 20} / ${p.total >> 20} MB`;
@@ -122,25 +133,28 @@ listen("setup", (e) => {
 $("go").onclick = async () => {
   const formats = [...document.querySelectorAll(".fmt:checked")].map((c) => c.value);
   $("go").disabled = true; $("doneRow").classList.add("hidden"); $("log").innerHTML = "";
-  $("bar").classList.remove("hidden"); $("bar").value = 0; $("state").textContent = "starting…";
+  $("bar").classList.remove("hidden"); $("bar").value = 0; $("state").textContent = "starting…"; secs = [];
   try {
     json = await invoke("convert", { inputs, out, formats, gpu: $("gpu").checked, handwritten: $("handwritten").checked });
     $("doneRow").classList.remove("hidden");
   } catch (e) { $("state").textContent = "failed"; log(String(e), "bad"); }
   refresh();
 };
+let secs = [];
 listen("progress", (e) => {
   const p = e.payload;
   if (p.kind === "status") log(p.message);
   if (p.kind === "page") {
     $("bar").max = p.total; $("bar").value = p.done;
     $("state").textContent = `page ${p.done} of ${p.total}`;
+    secs.push(p.seconds);
     log(`${p.done}/${p.total}  ${p.path.split(/[\\/]/).pop()}: ${p.blocks} blocks, ${p.flagged} flagged, ${p.seconds.toFixed(1)}s`);
   }
   if (p.kind === "page_failed") log(`${p.done}/${p.total}  ${p.path}: failed: ${p.error}`, "bad");
   if (p.kind === "finished") {
     $("bar").max = 1; $("bar").value = 1;
-    $("state").innerHTML = `<span class="ok">done</span>: ${p.pages} page(s), ${p.flagged} block(s) to review`;
+    const s = [...secs].sort((a, b) => a - b), mid = s.length ? (s[(s.length - 1) >> 1] + s[s.length >> 1]) / 2 : 0;
+    $("state").innerHTML = `<span class="ok">done</span>: ${p.pages} page(s), ${p.flagged} block(s) to review` + (s.length ? `, about ${Math.round(mid)} s a page` : "");
     if (p.failed.length) log(`${p.failed.length} page(s) failed; convert again to retry them`, "bad");
   }
 });
