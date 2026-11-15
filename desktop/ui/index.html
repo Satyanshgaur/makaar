@@ -23,6 +23,10 @@
   #log { font: 12px/1.4 ui-monospace, monospace; max-height: 140px; overflow: auto; background: #f4f4f4; padding: 6px 8px; border-radius: 4px; margin-top: 8px; white-space: pre-wrap; }
   .bad { color: var(--bad); } .ok { color: var(--ok); }
   .hidden { display: none; }
+  dialog { border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; max-width: 440px; font: inherit; }
+  dialog::backdrop { background: rgba(0, 0, 0, .35); }
+  dialog h2 { font-size: 16px; margin: 0 0 8px; }
+  dialog .row { justify-content: flex-end; margin-top: 14px; }
 </style>
 </head>
 <body>
@@ -67,6 +71,7 @@
     <h2>3. Convert</h2>
     <div class="row">
       <button class="primary" id="go" disabled>Convert</button>
+      <button id="stop" class="hidden" title="Keep what is finished so far; you can resume the rest later">Stop</button>
       <span id="state" class="muted"></span>
     </div>
     <progress id="bar" class="hidden" max="1" value="0"></progress>
@@ -77,6 +82,14 @@
     </div>
   </section>
 </main>
+<dialog id="stopped">
+  <h2>Stopped before the end</h2>
+  <p id="stoppedText"></p>
+  <div class="row">
+    <button id="keep">Keep what's done</button>
+    <button class="primary" id="resume">Resume</button>
+  </div>
+</dialog>
 <script>
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -106,7 +119,7 @@ async function checkStatus() {
 async function choose(folder) {
   const picked = await invoke("pick_inputs", { folder });
   if (!picked.length) return;
-  inputs = picked;
+  inputs = picked; $("go").textContent = "Convert";
   out = await invoke("default_output", { inputs });
   refresh();
 }
@@ -133,16 +146,35 @@ listen("setup", (e) => {
   $("setupItem").textContent = `${p.item}: ${p.done >> 20} / ${p.total >> 20} MB`;
 });
 
-$("go").onclick = async () => {
+// Convert, or after a Stop, continue: the same pages and folder pick up where the queue left off.
+async function run() {
   const formats = [...document.querySelectorAll(".fmt:checked")].map((c) => c.value);
-  $("go").disabled = true; $("doneRow").classList.add("hidden"); $("log").innerHTML = "";
+  $("go").disabled = true; $("stop").classList.remove("hidden"); $("stop").disabled = false;
+  $("doneRow").classList.add("hidden"); $("log").innerHTML = "";
   $("bar").classList.remove("hidden"); $("bar").value = 0; $("state").textContent = "starting…"; secs = [];
   try {
-    json = await invoke("convert", { inputs, out, formats, gpu: $("gpu").checked, handwritten: $("handwritten").checked });
-    $("doneRow").classList.remove("hidden");
+    const r = await invoke("convert", { inputs, out, formats, gpu: $("gpu").checked, handwritten: $("handwritten").checked });
+    json = r.json;
+    $("go").textContent = r.stopped ? "Resume" : "Convert";
+    if (r.stopped) {
+      $("state").innerHTML = `<span class="bad">stopped</span>: ${r.done} of ${r.total} pages are in the output; the rest are missing`;
+      $("stoppedText").textContent = r.done
+        ? `Only the first ${r.done} of ${r.total} pages were converted, and that is all the output folder holds. Resume to do the other ${r.total - r.done}, or keep this partial result.`
+        : "No page had finished, so nothing was written. Resume to start again.";
+      $("stopped").showModal();
+    }
+    if (json) $("doneRow").classList.remove("hidden");
   } catch (e) { $("state").textContent = "failed"; log(String(e), "bad"); }
+  $("stop").classList.add("hidden");
   refresh();
+}
+$("go").onclick = run;
+$("stop").onclick = () => {
+  $("stop").disabled = true; $("state").textContent = "stopping: finishing the page read in progress…";
+  invoke("stop_convert");
 };
+$("resume").onclick = () => { $("stopped").close(); run(); };
+$("keep").onclick = () => $("stopped").close();
 let secs = [];
 listen("progress", (e) => {
   const p = e.payload;
@@ -153,6 +185,7 @@ listen("progress", (e) => {
     secs.push(p.seconds);
     log(`${p.done}/${p.total}  ${p.path.split(/[\\/]/).pop()}: ${p.blocks} blocks, ${p.flagged} flagged, ${p.seconds.toFixed(1)}s`);
   }
+  if (p.kind === "stopped") log(p.done ? `stopped after ${p.done} of ${p.total} pages` : "stopped before any page finished", "bad");
   if (p.kind === "page_failed") log(`${p.done}/${p.total}  ${p.path}: failed: ${p.error}`, "bad");
   if (p.kind === "finished") {
     $("bar").max = 1; $("bar").value = 1;

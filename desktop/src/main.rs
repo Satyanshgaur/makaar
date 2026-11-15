@@ -5,8 +5,9 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 
-use makaar_core::app::{self, ConvertOptions, Progress};
+use makaar_core::app::{self, CancelFlag, ConvertOptions, Progress};
 use makaar_core::document::Document;
 use makaar_core::review::Review;
 use makaar_core::{models, runtime, sidecar};
@@ -18,6 +19,8 @@ use tauri_plugin_opener::OpenerExt;
 /// One job at a time: conversion and setup both load models and use the CPU/GPU fully.
 static BUSY: AtomicBool = AtomicBool::new(false);
 static REVIEWS: AtomicUsize = AtomicUsize::new(0);
+/// The Stop button: set while a conversion runs, cleared when the next one starts.
+static CANCEL: LazyLock<CancelFlag> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
 #[derive(Serialize)]
 struct Status {
@@ -158,11 +161,28 @@ fn default_output(app: AppHandle, inputs: Vec<String>) -> String {
         .to_string()
 }
 
-/// Runs a conversion on a worker thread; progress arrives as `progress` events. Returns the
-/// document JSON path when done.
+#[derive(Serialize)]
+struct Outcome {
+    /// The document JSON; with `stopped`, it holds only the first `done` pages (absent if none).
+    json: Option<String>,
+    stopped: bool,
+    done: usize,
+    total: usize,
+}
+
+/// Asks the running conversion to stop: it finishes the read in hand, exports the pages done so
+/// far and leaves the rest queued, so converting again resumes.
 #[tauri::command]
-async fn convert(app: AppHandle, inputs: Vec<String>, out: String, formats: Vec<String>, gpu: bool, handwritten: bool) -> Result<String, String> {
+fn stop_convert() {
+    CANCEL.store(true, Ordering::SeqCst);
+}
+
+/// Runs a conversion on a worker thread; progress arrives as `progress` events. Returns where
+/// the document is, and whether it was stopped early.
+#[tauri::command]
+async fn convert(app: AppHandle, inputs: Vec<String>, out: String, formats: Vec<String>, gpu: bool, handwritten: bool) -> Result<Outcome, String> {
     let busy = Busy::take()?;
+    CANCEL.store(false, Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
         let _busy = busy;
         let mut c = ConvertOptions::new(inputs.into_iter().map(PathBuf::from).collect(), out.into());
@@ -173,11 +193,19 @@ async fn convert(app: AppHandle, inputs: Vec<String>, out: String, formats: Vec<
         if !gpu {
             c.gpu_layers = Some(0);
         }
+        c.cancel = Some(CANCEL.clone());
+        let mut stopped = None;
         let json = app::convert(&c, &mut |p: Progress| {
+            if let Progress::Stopped { json, done, total } = &p {
+                stopped = Some((json.is_some(), *done, *total));
+            }
             let _ = app.emit("progress", p);
         })
         .map_err(|e| e.to_string())?;
-        Ok(json.display().to_string())
+        Ok(match stopped {
+            Some((wrote, done, total)) => Outcome { json: wrote.then(|| json.display().to_string()), stopped: true, done, total },
+            None => Outcome { json: Some(json.display().to_string()), stopped: false, done: 0, total: 0 },
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -235,6 +263,7 @@ fn main() {
             pick_output,
             default_output,
             convert,
+            stop_convert,
             open_review,
             open_path
         ])

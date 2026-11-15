@@ -344,6 +344,13 @@ fn print_progress(p: Progress) {
         } => {
             eprintln!("[{done}/{total}] {path}: FAILED: {error}")
         }
+        Progress::Stopped { json, done, total } => match json {
+            Some(j) => eprintln!(
+                "stopped: wrote {} with {done} of {total} page(s); rerun the same command to finish",
+                j.with_extension("").display()
+            ),
+            None => eprintln!("stopped before any page finished"),
+        },
         Progress::Finished {
             json,
             pages,
