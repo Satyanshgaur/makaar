@@ -98,6 +98,9 @@ impl LlamaServer {
                 &port.to_string(),
                 "--no-webui",
             ])
+            // One request at a time, and every request is a different image: the default four
+            // slots and the prompt cache (up to 8 GB of RAM) only add memory pressure.
+            .args(["-np", "1", "--cache-ram", "0"])
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log);
