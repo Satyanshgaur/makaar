@@ -127,7 +127,7 @@
     <div class="links">
       <a class="ghost" href="#how">How it works</a>
       <a class="ghost" href="#accuracy">Accuracy</a>
-      <a class="ghost" href="https://codeberg.org/Satyanshgaur/makaar">Source</a>
+      <a class="ghost" href="https://github.com/Satyanshgaur/makaar">GitHub</a>
       <a class="pill" href="#download">Download</a>
     </div>
   </nav>
@@ -195,7 +195,7 @@ E = n<span class="b">_{</span><span class="n">1</span><span class="b">}</span>E<
       <div class="stat"><div class="big">Level</div><p class="body quiet">with Gemini 3.5 Flash on handwritten maths: 0.203 vs 0.225 on 30 CROHME expressions.</p></div>
       <div class="stat"><div class="big">Behind</div><p class="body quiet">on handwritten prose: 0.079 vs Gemini's 0.029 on 30 IAM lines. We're working on it.</p></div>
     </div>
-    <p class="fine">Error rate is normalised edit distance, the share of characters you would have to fix; lower is better. Speed: about 7 seconds a page with an NVIDIA GPU from the command line, 1–2 minutes on a laptop CPU. The desktop app uses the CPU for now. Full method and tables: <a href="https://codeberg.org/Satyanshgaur/makaar/src/branch/main/docs/RESULTS.md">RESULTS.md</a>.</p>
+    <p class="fine">Error rate is normalised edit distance, the share of characters you would have to fix; lower is better. Speed: about 7 seconds a page with an NVIDIA GPU from the command line, 1–2 minutes on a laptop CPU. The desktop app uses the CPU for now. Full method and tables: <a href="https://github.com/Satyanshgaur/makaar/blob/main/docs/RESULTS.md">RESULTS.md</a>.</p>
   </div>
 </section>
 
@@ -217,45 +217,58 @@ E = n<span class="b">_{</span><span class="n">1</span><span class="b">}</span>E<
     <div class="dl">
       <div class="os" data-os="windows">
         <h3>Windows</h3>
-        <div class="files"><a data-asset="_x64-setup.exe" href="https://codeberg.org/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_x64-setup.exe">Installer (.exe) <span>Windows 10/11</span></a></div>
+        <div class="files"><a data-asset="_x64-setup.exe" href="https://github.com/Satyanshgaur/makaar/releases/latest">Installer (.exe) <span>Windows 10/11</span></a></div>
         <p>Windows will say <i>the publisher could not be verified</i>; click <b>Run</b>. Or, on a blue screen, <b>More info → Run anyway</b>. We're working on signing.</p>
       </div>
       <div class="os" data-os="mac">
         <h3>macOS</h3>
-        <div class="files"><a data-asset="_aarch64.dmg" href="https://codeberg.org/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_aarch64.dmg">Disk image (.dmg) <span>Apple silicon</span></a></div>
+        <div class="files"><a data-asset="_aarch64.dmg" href="https://github.com/Satyanshgaur/makaar/releases/latest">Disk image (.dmg) <span>Apple silicon</span></a></div>
         <p>Drag makaar to Applications. The first time, right-click it and choose <b>Open</b>.</p>
       </div>
       <div class="os" data-os="linux">
         <h3>Linux</h3>
         <div class="files">
-          <a data-asset="_amd64.AppImage" href="https://codeberg.org/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_amd64.AppImage">AppImage <span>any distribution</span></a>
-          <a data-asset="_amd64.deb" href="https://codeberg.org/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_amd64.deb">.deb <span>Debian, Ubuntu</span></a>
+          <a data-asset="_amd64.AppImage" href="https://github.com/Satyanshgaur/makaar/releases/latest">AppImage <span>any distribution</span></a>
+          <a data-asset="_amd64.deb" href="https://github.com/Satyanshgaur/makaar/releases/latest">.deb <span>Debian, Ubuntu</span></a>
         </div>
         <p>Run <code>chmod +x</code> on the AppImage and start it, or <code>sudo apt install ./makaar_*.deb</code>.</p>
       </div>
     </div>
-    <p class="fine">The first start downloads the reading models: about 1.9 GB, once, checked with SHA-256. The command-line version and all files are on <a href="https://codeberg.org/Satyanshgaur/makaar/releases/tag/v0.1.0">Codeberg Releases</a>.</p>
+    <p class="fine">The first start downloads the reading models: about 1.9 GB, once, checked with SHA-256. The command-line version and all files are on <a href="https://github.com/Satyanshgaur/makaar/releases/latest">GitHub Releases</a>.</p>
   </div>
 </section>
 
 <div class="wrap">
   <footer>
     <span>makaar · Apache 2.0 · the optional handwriting add-on is CC BY-NC-SA 4.0 (non-commercial)</span>
-    <span><a href="https://codeberg.org/Satyanshgaur/makaar">Source</a> · <a href="https://codeberg.org/Satyanshgaur/makaar/issues">Report a problem</a></span>
+    <span><a href="https://github.com/Satyanshgaur/makaar">GitHub</a> · <a href="https://github.com/Satyanshgaur/makaar/issues">Report a problem</a></span>
   </footer>
 </div>
 
 <script>
-// Hero button: point it at the visitor's OS. Release links are hard-coded to v0.1.0 on Codeberg and need bumping per release.
-(() => {
+// Download links: the latest GitHub release, so the site never needs editing for a new version.
+(async () => {
   const ua = navigator.userAgent;
   const os = /Windows/.test(ua) ? "windows" : /Mac/.test(ua) ? "mac" : /Linux|X11/.test(ua) && !/Android/.test(ua) ? "linux" : null;
   const label = { windows: "Download for Windows", mac: "Download for macOS", linux: "Download for Linux" };
+  let assets = [];
+  try {
+    const r = await fetch("https://api.github.com/repos/Satyanshgaur/makaar/releases/latest");
+    if (r.ok) {
+      const rel = await r.json();
+      assets = rel.assets || [];
+      document.getElementById("ver").textContent = rel.tag_name;
+    }
+  } catch (_) { /* offline or rate-limited: links fall back to the releases page */ }
+  for (const a of document.querySelectorAll("[data-asset]")) {
+    const hit = assets.find((x) => x.name.endsWith(a.dataset.asset));
+    if (hit) a.href = hit.browser_download_url;
+  }
   if (os) {
     const first = document.querySelector(`.os[data-os="${os}"] [data-asset]`);
     const hero = document.getElementById("heroDl");
     hero.textContent = label[os];
-    if (first) hero.href = first.href;
+    if (first && first.href.includes("/download/")) hero.href = first.href;
   }
 })();
 
