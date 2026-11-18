@@ -2,9 +2,11 @@
 //! `<out>/.makaar/` (SQLite plus one JSON per finished page), so an interrupted run resumes;
 //! progress is reported through a callback.
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use crate::document::{BlockType, Document, Page};
+pub use crate::engine::CancelFlag;
 use crate::engine::{Engine, OpenAiEngine};
 use crate::layout::PpDocLayoutV3;
 use crate::models::{self, REQUIRED};
@@ -40,6 +42,9 @@ pub struct ConvertOptions {
     /// Handwritten notes: read each block once, with the handwriting adapter (if installed),
     /// instead of twice. About twice as fast on a CPU; printed maths may be restyled.
     pub handwritten: bool,
+    /// Set from another thread to stop after the page in hand; finished pages are exported and
+    /// the rest stay queued, so converting again resumes.
+    pub cancel: Option<CancelFlag>,
 }
 
 impl ConvertOptions {
@@ -59,7 +64,12 @@ impl ConvertOptions {
             no_specialist: false,
             no_adapter: false,
             handwritten: false,
+            cancel: None,
         }
+    }
+
+    fn stopped(&self) -> bool {
+        self.cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed))
     }
 
     pub fn json_path(&self) -> PathBuf {
@@ -92,6 +102,13 @@ pub enum Progress {
         pages: usize,
         flagged: usize,
         failed: Vec<String>,
+    },
+    /// Stopped early. `json` holds the `done` finished pages (none if no page finished); the
+    /// other `total - done` pages stay queued for a resume.
+    Stopped {
+        json: Option<PathBuf>,
+        done: usize,
+        total: usize,
     },
 }
 
@@ -138,7 +155,8 @@ pub fn convert(c: &ConvertOptions, progress: &mut dyn FnMut(Progress)) -> Result
     if pending > 0 {
         recognize_pending(c, &queue, &rows, &state, progress)?;
     }
-    assemble_and_export(c, &queue, &state, progress)
+    let stopped = c.stopped() && queue.pages(JOB)?.iter().any(|(_, s)| s == "pending");
+    assemble_and_export(c, &queue, &state, progress, stopped)
 }
 
 /// Model files the job needs that aren't in `c.models`.
@@ -176,7 +194,11 @@ fn recognize_pending(
     let adapter = models::handwriting_adapter(&c.models).filter(|_| !c.no_adapter);
     let adapter_only = c.handwritten && adapter.is_some();
     let mut engine: Box<dyn Engine> = match &c.server {
-        Some(u) => Box::new(OpenAiEngine::new("paddleocr-vl-1.6", u)),
+        Some(u) => {
+            let mut e = OpenAiEngine::new("paddleocr-vl-1.6", u);
+            e.cancel = c.cancel.clone();
+            Box::new(e)
+        }
         None => Box::new(LazyServer::new(
             "paddleocr-vl-1.6",
             sidecar::find_binary(&c.models).ok_or(sidecar::SidecarError::NotFound)?,
@@ -188,6 +210,7 @@ fn recognize_pending(
                 gpu_layers: c.gpu_layers,
                 ctx: 8192,
                 log: state.join("llama-server.log"),
+                cancel: c.cancel.clone(),
             },
         )),
     };
@@ -203,7 +226,11 @@ fn recognize_pending(
     let index = |id: i64| rows.iter().position(|(p, _)| p.id == id).unwrap_or(0);
     let total = rows.len();
     let files = c.out.join(format!("{}_files", c.name));
-    while let Some(job) = queue.claim(JOB)? {
+    loop {
+        if c.stopped() {
+            break;
+        }
+        let Some(job) = queue.claim(JOB)? else { break };
         let i = index(job.id);
         let t = Instant::now();
         let res = ingest::load_page(Path::new(&job.path))
@@ -248,6 +275,11 @@ fn recognize_pending(
                         .count(),
                     seconds: t.elapsed().as_secs_f64(),
                 });
+            }
+            Err(_) if c.stopped() => {
+                // the read was cut short by Stop, not a bad page: queue it again
+                queue.recover()?;
+                break;
             }
             Err(error) => {
                 queue.finish(job.id, false)?;
@@ -355,6 +387,7 @@ fn assemble_and_export(
     queue: &Queue,
     state: &Path,
     progress: &mut dyn FnMut(Progress),
+    stopped: bool,
 ) -> Result<PathBuf> {
     let mut doc = Document {
         version: 1,
@@ -372,12 +405,21 @@ fn assemble_and_export(
             failed.push(job.path);
         }
     }
+    let total = doc.pages.len() + failed.len();
+    if stopped && doc.pages.is_empty() {
+        progress(Progress::Stopped { json: None, done: 0, total });
+        return Ok(c.json_path());
+    }
     drop_repeated_margins(&mut doc);
     if let Some(note) = write_exports(&mut doc, &c.out, &c.name, &c.formats, c.tectonic.as_deref())?
     {
         progress(Progress::Status { message: note });
     }
     let json = c.json_path();
+    if stopped {
+        progress(Progress::Stopped { json: Some(json.clone()), done: doc.pages.len(), total });
+        return Ok(json);
+    }
     progress(Progress::Finished {
         json: json.clone(),
         pages: doc.pages.len(),
@@ -390,6 +432,40 @@ fn assemble_and_export(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopping_exports_the_finished_pages_and_keeps_the_rest_queued() {
+        let dir = std::env::temp_dir().join(format!("makaar-stop-{}", std::process::id()));
+        let state = dir.join(".makaar");
+        std::fs::create_dir_all(state.join("pages")).unwrap();
+        let queue = Queue::open(":memory:").unwrap();
+        for p in ["a.png", "b.png", "c.png"] {
+            queue.enqueue(JOB, p).unwrap();
+        }
+        let first = queue.claim(JOB).unwrap().unwrap();
+        let page = serde_json::json!({"index": 0, "width": 10, "height": 10, "blocks": [
+            {"id": "a", "type": "text", "label": "text", "bbox": [0, 0, 1, 1], "order": 0, "text": "hello"}]});
+        std::fs::write(state.join("pages").join(format!("{}.json", first.id)), page.to_string()).unwrap();
+        queue.finish(first.id, true).unwrap();
+        let mut c = ConvertOptions::new(vec![], dir.clone());
+        c.formats = vec!["md".into()];
+        let mut events = vec![];
+        assemble_and_export(&c, &queue, &state, &mut |p| events.push(p), true).unwrap();
+        assert!(matches!(events.last(), Some(Progress::Stopped { json: Some(_), done: 1, total: 3 })));
+        assert!(std::fs::read_to_string(dir.join("notes.md")).unwrap().contains("hello"));
+        // the other two pages are still pending, so a resume picks them up
+        assert_eq!(queue.pages(JOB).unwrap().iter().filter(|(_, s)| s == "pending").count(), 2);
+
+        // stopped before any page finished: nothing is written
+        let empty = Queue::open(":memory:").unwrap();
+        empty.enqueue(JOB, "a.png").unwrap();
+        let mut events = vec![];
+        let c = ConvertOptions::new(vec![], dir.join("none"));
+        assemble_and_export(&c, &empty, &state, &mut |p| events.push(p), true).unwrap();
+        assert!(matches!(events.last(), Some(Progress::Stopped { json: None, done: 0, total: 1 })));
+        assert!(!dir.join("none").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn drops_watermarks_but_keeps_page_numbers_and_notes() {

@@ -16,6 +16,8 @@ pub enum SidecarError {
     Exited(String, PathBuf),
     #[error("llama-server not ready after {0:?}; see {1}")]
     Timeout(Duration, PathBuf),
+    #[error("stopped")]
+    Cancelled,
 }
 
 pub struct SidecarConfig {
@@ -29,6 +31,8 @@ pub struct SidecarConfig {
     pub ctx: u32,
     /// llama-server's output goes here, for diagnosing start-up failures.
     pub log: PathBuf,
+    /// The Stop button: abandons start-up and is handed to the engine for its requests.
+    pub cancel: Option<crate::engine::CancelFlag>,
 }
 
 pub struct LlamaServer {
@@ -94,6 +98,9 @@ impl LlamaServer {
                 &port.to_string(),
                 "--no-webui",
             ])
+            // One request at a time, and every request is a different image: the default four
+            // slots and the prompt cache (up to 8 GB of RAM) only add memory pressure.
+            .args(["-np", "1", "--cache-ram", "0"])
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log);
@@ -112,11 +119,16 @@ impl LlamaServer {
             child: cmd.spawn()?,
             url: format!("http://127.0.0.1:{port}"),
         };
-        server.wait_ready(Duration::from_secs(300), &cfg.log)?;
+        server.wait_ready(Duration::from_secs(300), &cfg.log, cfg.cancel.as_deref())?;
         Ok(server)
     }
 
-    fn wait_ready(&mut self, limit: Duration, log: &Path) -> Result<(), SidecarError> {
+    fn wait_ready(
+        &mut self,
+        limit: Duration,
+        log: &Path,
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<(), SidecarError> {
         let t = Instant::now();
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(2)))
@@ -124,6 +136,9 @@ impl LlamaServer {
             .build()
             .new_agent();
         while t.elapsed() < limit {
+            if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+                return Err(SidecarError::Cancelled);
+            }
             if let Some(status) = self.child.try_wait()? {
                 return Err(SidecarError::Exited(status.to_string(), log.into()));
             }
@@ -200,11 +215,14 @@ impl LazyServer {
     fn engine(&mut self) -> Result<&mut crate::engine::OpenAiEngine, crate::engine::EngineError> {
         if self.running.is_none() {
             let t = Instant::now();
-            let server = LlamaServer::start(&self.bin, &self.cfg)
-                .map_err(|e| crate::engine::EngineError::Response(e.to_string()))?;
+            let server = LlamaServer::start(&self.bin, &self.cfg).map_err(|e| match e {
+                SidecarError::Cancelled => crate::engine::EngineError::Cancelled,
+                e => crate::engine::EngineError::Response(e.to_string()),
+            })?;
             eprintln!("general model ready in {:.0}s", t.elapsed().as_secs_f64());
             let mut engine = crate::engine::OpenAiEngine::new(&self.name, &server.url);
             engine.has_adapter = self.cfg.lora.is_some();
+            engine.cancel = self.cfg.cancel.clone();
             self.running = Some((server, engine));
         }
         Ok(&mut self.running.as_mut().expect("started above").1)

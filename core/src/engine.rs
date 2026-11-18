@@ -1,11 +1,16 @@
 //! Recognition engines. Mirrors `eval/src/makaar_eval/engine.py`: every recognizer, specialist or
 //! general model, takes a region crop and a task and returns text plus token probabilities.
 use std::io::Cursor;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
 use image::{ImageFormat, RgbImage};
 use serde_json::{json, Value};
+
+/// Set by the app's Stop button; engines check it between requests and while streaming.
+pub type CancelFlag = Arc<AtomicBool>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -15,6 +20,8 @@ pub enum EngineError {
     Image(#[from] image::ImageError),
     #[error("unexpected response: {0}")]
     Response(String),
+    #[error("stopped")]
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +92,8 @@ pub struct OpenAiEngine {
     /// The server has a LoRA adapter loaded (id 0) but not applied by default
     /// (`--lora-init-without-apply`); `recognize_with_adapter` switches it on per request.
     pub has_adapter: bool,
+    /// Checked before each request and on every streamed line.
+    pub cancel: Option<CancelFlag>,
 }
 
 impl OpenAiEngine {
@@ -99,10 +108,14 @@ impl OpenAiEngine {
             agent,
             prompt: paddle_prompt,
             has_adapter: false,
+            cancel: None,
         }
     }
 
     fn read(&mut self, crop: &RgbImage, task: Task, max_tokens: u32, adapter: bool) -> Result<Recognition, EngineError> {
+        if cancelled(self.cancel.as_deref()) {
+            return Err(EngineError::Cancelled);
+        }
         let mut png = Vec::new();
         crop.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)?;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
@@ -125,8 +138,12 @@ impl OpenAiEngine {
         // budget costs minutes. Dropping the reader closes the connection, and llama-server
         // cancels the request.
         let reader = std::io::BufReader::new(resp.into_body().into_reader());
-        parse_stream(reader, &self.name)
+        parse_stream_cancellable(reader, &self.name, self.cancel.as_deref())
     }
+}
+
+fn cancelled(flag: Option<&AtomicBool>) -> bool {
+    flag.is_some_and(|f| f.load(Ordering::Relaxed))
 }
 
 impl Engine for OpenAiEngine {
@@ -217,9 +234,22 @@ pub fn parse_stream(
     reader: impl std::io::BufRead,
     engine: &str,
 ) -> Result<Recognition, EngineError> {
+    parse_stream_cancellable(reader, engine, None)
+}
+
+/// `parse_stream` that gives up with `Cancelled` as soon as `cancel` is set; the caller drops the
+/// reader, which closes the connection so llama-server stops generating.
+pub fn parse_stream_cancellable(
+    reader: impl std::io::BufRead,
+    engine: &str,
+    cancel: Option<&AtomicBool>,
+) -> Result<Recognition, EngineError> {
     let (mut text, mut token_probs, mut truncated) = (String::new(), vec![], false);
     let mut checked = 0;
     for line in reader.lines() {
+        if cancelled(cancel) {
+            return Err(EngineError::Cancelled);
+        }
         let line = line.map_err(|e| EngineError::Response(e.to_string()))?;
         let Some(data) = line.strip_prefix("data:").map(str::trim) else {
             continue;
@@ -289,6 +319,16 @@ mod tests {
         let none = parse_stream(sse(&[]), "p").unwrap();
         assert_eq!(none.confidence(), 1.0);
         assert!(!none.truncated);
+    }
+
+    #[test]
+    fn a_set_cancel_flag_aborts_the_stream() {
+        let chunks = [json!({"choices": [{"delta": {"content": "x"}}]})];
+        let stop = AtomicBool::new(true);
+        let r = parse_stream_cancellable(sse(&chunks), "p", Some(&stop));
+        assert!(matches!(r, Err(EngineError::Cancelled)));
+        let go = AtomicBool::new(false);
+        assert_eq!(parse_stream_cancellable(sse(&chunks), "p", Some(&go)).unwrap().text, "x");
     }
 
     #[test]
