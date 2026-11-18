@@ -4,7 +4,7 @@
 
 Handwritten or printed pages and PDFs all work. Blocks the model is unsure of are marked in red so you can check them.
 
-[**Download for Windows**](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_x64-setup.exe) · [**Linux**](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_amd64.AppImage) · [**macOS (Apple silicon)**](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_aarch64.dmg) · [all files](https://github.com/Satyanshgaur/makaar/releases/latest)
+[**Download for Windows**](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_x64-setup.exe) · [**Linux**](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_amd64.AppImage) · [**macOS (Apple silicon)**](https://github.com/Satyanshgaur/makaar/releases/download/v0.1.0/makaar_0.1.0_aarch64.dmg) · [all files](https://github.com/Satyanshgaur/makaar/releases/latest) · [**makaar.sbs**](https://makaar.sbs)
 
 ## Works in 3 easy steps
 
